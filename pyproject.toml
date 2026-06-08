@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "calw"
+version = "1.0.0"
+description = "Calw AI Agent - 全功能自主 AI 智能体"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.30.0",
+    "openai>=1.0.0",
+    "customtkinter>=5.0.0",
+    "pytest>=8.0.0",
+]
+
+[tool.setuptools]
+packages = ["agent", "agent.utils", "agent.plugins", "agent.build_patterns"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
