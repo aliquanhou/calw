@@ -1,0 +1,6 @@
+{
+  "provider": "DeepSeek",
+  "api_key": "sk-763af97620854263b37f9999466291c1",
+  "model": "",
+  "base_url": "https://api.deepseek.com"
+}

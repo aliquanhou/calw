@@ -1,0 +1,226 @@
+{
+  "version": 1,
+  "updated": 1779927691.6742735,
+  "patterns": [
+    {
+      "signature": "NativeWind.*(?:not compat|version|unrecognized|failed to resolve|only supports)",
+      "label": "NativeWind 版本不兼容",
+      "fix": "NativeWind 需要匹配的 Tailwind CSS 版本。NativeWind v2 需要 Tailwind v3，NativeWind v4 需要 Tailwind v4。运行 npm list tailwindcss nativewind 检查版本，然后安装兼容版本。",
+      "category": "incompatibility",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Module (?:not found|parse failed:).*'[^']*\\.css'",
+      "label": "CSS Module 加载失败",
+      "fix": "确保 webpack/metro 配置了 CSS loader，或检查 CSS 文件路径是否正确",
+      "category": "missing_dep",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Module.*not found.*from.*node_modules",
+      "label": "Node 模块依赖缺失",
+      "fix": "运行 npm install 或 yarn install，检查 package.json 中是否声明了该依赖",
+      "category": "missing_dep",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Can't resolve '[^']+' in '.*node_modules'",
+      "label": "嵌套依赖缺失",
+      "fix": "尝试删除 node_modules 并重新安装: rm -rf node_modules && npm install",
+      "category": "missing_dep",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Property '[^']+' doesn't exist",
+      "label": "TypeScript 类型错误",
+      "fix": "检查类型定义是否完整，或添加类型断言/声明",
+      "category": "syntax",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "TS\\d+:|TypeScript.*error|Cannot find name|类型 \\\"[^\\\"]+\\\" 上不存在属性",
+      "label": "TypeScript 编译错误",
+      "fix": "运行 tsc --noEmit 查看详细错误，修复类型不匹配",
+      "category": "syntax",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Unknown word|CSS Syntax Error|Unknown property",
+      "label": "CSS 语法错误",
+      "fix": "检查 CSS/Tailwind 类名拼写，确保使用的 Tailwind 版本支持该类名",
+      "category": "syntax",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Duplicate identifier|Identifier '[^']+' already declared",
+      "label": "重复声明错误",
+      "fix": "检查是否存在同名变量/导入，使用 import type 或重命名",
+      "category": "syntax",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "(?:ERR!|error|Error).*code ELIFECYCLE",
+      "label": "npm 生命周期脚本失败",
+      "fix": "检查 package.json 中的 scripts 配置，确认入口文件存在且路径正确",
+      "category": "config",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "(?:ERR!|error).*code ENOENT",
+      "label": "文件或命令不存在",
+      "fix": "检查路径是否正确，确认命令已安装 (which/npm install -g)",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "(?:ERR!|error).*code EACCES|EPERM",
+      "label": "权限不足",
+      "fix": "以管理员身份运行，或修复目录权限 (icacls / chmod)",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Expo.*web.*(?:not support|not compatible|error|fail)",
+      "label": "Expo Web 构建失败",
+      "fix": "检查 expo-cli 版本，确保 @expo/webpack-config 已安装: npm install @expo/webpack-config",
+      "category": "incompatibility",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Watchman.*(?:error|not found|fail)",
+      "label": "Watchman 不可用",
+      "fix": "安装 Watchman: choco install watchman 或忽略 (watchman 非必需但影响性能)",
+      "category": "env",
+      "severity": "warning",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Port (\\d+) .*already in use|EADDRINUSE",
+      "label": "端口被占用",
+      "fix": "使用不同的端口，或杀掉占用进程: netstat -ano | findstr :<端口> && taskkill /F /PID <PID>",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "npm ERR!.*peer dep|unmet peer|peer dependency",
+      "label": "peer 依赖冲突",
+      "fix": "使用 --legacy-peer-deps 安装: npm install --legacy-peer-deps",
+      "category": "missing_dep",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "A module in BSS is trying to use the JSX name resolution callback",
+      "label": "React Native 模块 JSX 名解析冲突",
+      "fix": "检查是否使用了不兼容的 RN 版本，尝试 `npx react-native@latest init` 或降级模板版本",
+      "category": "incompatibility",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "(?:Invariant Violation|React Native.*version mismatch|JSX value should be either an expression or a quoted JSX text)",
+      "label": "React Native SDK 版本不匹配",
+      "fix": "检查 react-native 版本与项目模板版本是否一致，运行 npx react-native info 查看环境信息",
+      "category": "incompatibility",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Unable to resolve module (?!.*node_modules)",
+      "label": "模块解析失败（本地文件）",
+      "fix": "检查 import 路径是否正确，文件是否存在，路径大小写是否匹配",
+      "category": "syntax",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "Metro.*(?:has encountered an error|unexpected token|transform.*failed)",
+      "label": "Metro bundler 编译错误",
+      "fix": "清除 Metro 缓存: npx react-native start --reset-cache，或删除 node_modules/.cache 目录",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "error:0308010C|digital envelope routines.*unsupported|ERR_OSSL_EVP_UNSUPPORTED",
+      "label": "OpenSSL 不兼容（Node.js 17+）",
+      "fix": "设置 NODE_OPTIONS=--openssl-legacy-provider 环境变量",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "gyp(?: ERR!|:).*node-gyp|ERR! node-gyp",
+      "label": "node-gyp 编译失败",
+      "fix": "安装构建工具: npm install --global windows-build-tools，或检查 Python/VC++ 环境",
+      "category": "env",
+      "severity": "error",
+      "hit_count": 0,
+      "first_seen": 0,
+      "last_seen": 0
+    },
+    {
+      "signature": "FatalError:\\ Something\\ completely\\ new\\ and\\ unexpected\\ happened\\ in\\ module\\ X",
+      "label": "FatalError: Something completely new and unexpected happened in module X",
+      "fix": "自动记录的模式。命令: npx build",
+      "category": "other",
+      "severity": "error",
+      "hit_count": 1,
+      "first_seen": 1779927691.6742735,
+      "last_seen": 1779927691.6742735
+    }
+  ]
+}
