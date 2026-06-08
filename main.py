@@ -4,7 +4,7 @@ import sys
 import os
 
 # Force UTF-8 mode on Windows for Chinese support
-os.environ["PYTHONUTF8"] = "1"
+os.environ.setdefault("PYTHONUTF8", "1")
 
 # Ensure the package directory is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -266,28 +266,8 @@ class AgentApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=0)
         self.grid_rowconfigure(1, weight=1)
 
-        # ══ Top Bar ══
-        bar = ctk.CTkFrame(self, height=48, corner_radius=0)
-        bar.grid(row=0, column=0, columnspan=2, sticky="ew")
-        bar.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(bar, text="AI Agent", font=(FONT_FAMILY, 18, "bold")
-                     ).grid(row=0, column=0, padx=20, pady=10, sticky="w")
-
-        self.provider_label = ctk.CTkLabel(bar, text="DeepSeek", font=(FONT_FAMILY, 12), text_color="#64B5F6")
-        self.provider_label.grid(row=0, column=1, padx=5, pady=10)
-
-        self.status_indicator = ctk.CTkLabel(bar, text="● 空闲", font=(FONT_FAMILY, 12), text_color="#4CAF50")
-        self.status_indicator.grid(row=0, column=2, padx=15, pady=10)
-
-        self.msg_label = ctk.CTkLabel(bar, text="0 轮", font=(FONT_FAMILY, 12), text_color="#888")
-        self.msg_label.grid(row=0, column=3, padx=5, pady=10)
-
-        ctk.CTkButton(bar, text="⚙ 设置", width=90, height=32, font=(FONT_FAMILY, 13),
-                      command=self._open_settings).grid(row=0, column=4, padx=(5, 5), pady=8)
-        ctk.CTkButton(bar, text="🗑 清空", width=80, height=32, font=(FONT_FAMILY, 13),
-                      fg_color="#555", hover_color="#666",
-                      command=self._clear_chat).grid(row=0, column=5, padx=(0, 15), pady=8)
+        # ══ Mission Control Dashboard ══
+        self._build_dashboard()
 
         # ══ Main: Chat + Tool Panel ══
         # Chat
@@ -381,9 +361,77 @@ class AgentApp(ctk.CTk):
         self.send_btn.grid(row=0, column=1, padx=(8, 10))
 
         # ══ Status Bar ══
-        self.status_bar = ctk.CTkLabel(self, text="就绪 — 请先点击 ⚙ 设置 配置 API",
+        self.status_bar = ctk.CTkLabel(self, text="Ready — configure API in Settings",
                                        anchor="w", font=(FONT_FAMILY, 11), text_color="#888")
         self.status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 4))
+
+    def _build_dashboard(self):
+        """Build the Mission Control dashboard header."""
+        dash = ctk.CTkFrame(self, height=72, corner_radius=0, fg_color="#1a1a2e")
+        dash.grid(row=0, column=0, columnspan=2, sticky="ew")
+        dash.grid_propagate(False)
+        dash.grid_columnconfigure(4, weight=1)  # push buttons to right
+
+        # ── Left: Brand + Status ──
+        brand_frame = ctk.CTkFrame(dash, fg_color="transparent")
+        brand_frame.grid(row=0, column=0, padx=(16, 8), pady=8, sticky="w")
+
+        ctk.CTkLabel(brand_frame, text="Calw", font=(FONT_FAMILY, 20, "bold"),
+                     text_color="#00d4ff").grid(row=0, column=0, sticky="w", pady=(0, 2))
+
+        self.status_indicator = ctk.CTkLabel(brand_frame, text="Idle", font=(FONT_FAMILY, 10),
+                                              text_color="#4CAF50", anchor="w")
+        self.status_indicator.grid(row=1, column=0, sticky="w")
+
+        # ── Provider + Model ──
+        prov_frame = ctk.CTkFrame(dash, fg_color="transparent")
+        prov_frame.grid(row=0, column=1, padx=16, pady=8, sticky="w")
+
+        ctk.CTkLabel(prov_frame, text="Provider", font=(FONT_FAMILY, 9),
+                     text_color="#666", anchor="w").grid(row=0, column=0, sticky="w")
+        self.provider_label = ctk.CTkLabel(prov_frame, text="DeepSeek", font=(FONT_FAMILY, 12),
+                                            text_color="#64B5F6", anchor="w")
+        self.provider_label.grid(row=1, column=0, sticky="w")
+
+        # ── Session Stats ──
+        stats_frame = ctk.CTkFrame(dash, fg_color="transparent")
+        stats_frame.grid(row=0, column=2, padx=16, pady=8, sticky="w")
+
+        ctk.CTkLabel(stats_frame, text="Session", font=(FONT_FAMILY, 9),
+                     text_color="#666", anchor="w").grid(row=0, column=0, sticky="w")
+        self.msg_label = ctk.CTkLabel(stats_frame, text="0 turns", font=(FONT_FAMILY, 12),
+                                       text_color="#aaa", anchor="w")
+        self.msg_label.grid(row=1, column=0, sticky="w")
+
+        # ── Token Usage ──
+        token_frame = ctk.CTkFrame(dash, fg_color="transparent")
+        token_frame.grid(row=0, column=3, padx=16, pady=8, sticky="w")
+
+        ctk.CTkLabel(token_frame, text="Context", font=(FONT_FAMILY, 9),
+                     text_color="#666", anchor="w").grid(row=0, column=0, sticky="w")
+        self.ctx_label = ctk.CTkLabel(token_frame, text="0 / 0K", font=(FONT_MONO, 11),
+                                       text_color="#aaa", anchor="w")
+        self.ctx_label.grid(row=1, column=0, sticky="w")
+
+        # ── Right: Action Buttons ──
+        btn_frame = ctk.CTkFrame(dash, fg_color="transparent")
+        btn_frame.grid(row=0, column=5, padx=(8, 16), pady=12, sticky="e")
+
+        ctk.CTkButton(btn_frame, text="Settings", width=80, height=30,
+                      font=(FONT_FAMILY, 12), command=self._open_settings,
+                      fg_color="#2a2a4a", hover_color="#3a3a5a"
+                      ).grid(row=0, column=0, padx=2)
+
+        ctk.CTkButton(btn_frame, text="Clear", width=70, height=30,
+                      font=(FONT_FAMILY, 12), command=self._clear_chat,
+                      fg_color="#333", hover_color="#555"
+                      ).grid(row=0, column=1, padx=2)
+
+        # ── Context progress bar (thin, below dashboard) ──
+        self.ctx_progress = ctk.CTkProgressBar(dash, height=3, corner_radius=0,
+                                                fg_color="#333", progress_color="#00d4ff")
+        self.ctx_progress.grid(row=1, column=0, columnspan=6, sticky="ew")
+        self.ctx_progress.set(0)
 
     def _build_tool_panel(self):
         """Build the right-side tool panel with vertical stack layout."""
@@ -493,19 +541,6 @@ class AgentApp(ctk.CTk):
         self.activity_log.tag_config("log_run", foreground="#FFC107")
         self.activity_log.tag_config("log_done", foreground="#4CAF50")
         self.activity_log.tag_config("log_err", foreground="#F44336")
-
-        # ── Context Usage Bar ──
-        ctx_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        ctx_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=(0, 6))
-        ctx_frame.grid_columnconfigure(0, weight=1)
-
-        self.ctx_progress = ctk.CTkProgressBar(ctx_frame, height=6, corner_radius=3)
-        self.ctx_progress.grid(row=0, column=0, pady=(0, 2), sticky="ew")
-        self.ctx_progress.set(0)
-
-        self.ctx_label = ctk.CTkLabel(ctx_frame, text="0 / 0K tokens",
-                                      font=(FONT_MONO, 9), text_color="#555")
-        self.ctx_label.grid(row=1, column=0, sticky="w")
 
     # ── Tool Panel Updates ──
 
@@ -701,7 +736,7 @@ class AgentApp(ctk.CTk):
         self.entry.configure(state="normal")
         self.send_btn.configure(state="normal", text="发送")
         self._set_action_buttons(False)
-        self.status_indicator.configure(text="● 空闲", text_color="#4CAF50")
+        self.status_indicator.configure(text="Idle", text_color="#4CAF50")
         self.entry.focus()
         n = len(self.agent.messages) // 2 if self.agent else 0
         self.msg_label.configure(text=f"{n} 轮")
@@ -784,7 +819,7 @@ class AgentApp(ctk.CTk):
         self.entry.configure(state="normal")
         self.send_btn.configure(state="normal", text="发送")
         self._set_action_buttons(False)
-        self.status_indicator.configure(text="● 空闲", text_color="#4CAF50")
+        self.status_indicator.configure(text="Idle", text_color="#4CAF50")
         self._reset_task_progress()
         if reason:
             self._chat_line(f"⛔ {reason}", "err")
@@ -970,7 +1005,7 @@ class AgentApp(ctk.CTk):
         self.send_btn.configure(state="disabled", text="工作中...")
         self.busy = True
         self._set_action_buttons(True)
-        self.status_indicator.configure(text="● 思考中", text_color="#FF9800")
+        self.status_indicator.configure(text="Thinking", text_color="#FF9800")
         self._append_user_msg(text)
 
         # Reset tool statuses
