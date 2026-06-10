@@ -3,6 +3,8 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#)
+[![CI](https://github.com/aliquanhou/calw/actions/workflows/ci.yml/badge.svg)](https://github.com/aliquanhou/calw/actions/workflows/ci.yml)
+[![Code Review](https://github.com/aliquanhou/calw/actions/workflows/pr-review.yml/badge.svg)](https://github.com/aliquanhou/calw/actions/workflows/pr-review.yml)
 
 > **Calw** 是一个支持多 LLM 提供商的自主 AI 智能体框架，具备系统操控、文件管理、代码分析、进程管理等核心能力。  
 > 脱胎于 claw，经过全面修复和重构，提供更稳定可靠的多轮自主执行体验。
@@ -16,17 +18,28 @@ calw/
 ├── main.py                  # 入口文件
 ├── requirements.txt         # Python 依赖
 ├── build.bat                # Windows 打包脚本
+├── scripts/                 # CI 辅助脚本
+│   └── pr_review.py         # PR 自动审查入口
 ├── tests/                   # 110 个单元测试
 │   ├── test_all.py          # 核心功能测试（89 个）
 │   ├── test_file_ops.py     # 文件操作测试
 │   └── test_math_utils.py   # 数学工具测试
+├── .github/
+│   └── workflows/
+│       ├── ci.yml           # CI 自动化测试
+│       └── pr-review.yml    # AI 自动代码审查
 └── agent/                   # 核心代码
     ├── __main__.py          # CLI 入口
     ├── app.py               # GUI 界面（基于 customtkinter）
+    ├── app_dialogs.py       # GUI 扩展对话框
     ├── core.py              # 核心循环引擎
     ├── context.py           # 上下文管理 & 压缩
     ├── providers.py         # LLM 提供商抽象
     ├── tools.py             # 工具注册 & 执行（~110KB）
+    ├── reviewer.py          # 🔍 代码审查引擎
+    ├── researcher.py        # 📊 深度研究引擎
+    ├── scheduler.py         # ⏰ 定时任务调度器
+    ├── watcher.py           # 👁 实时监控引擎
     ├── retry.py             # 指数退避重试
     ├── prompt.py            # 系统提示词
     ├── memory.py            # 跨会话记忆
@@ -77,6 +90,44 @@ calw/
 | 📦 tool_results 重复追加 | 移出 for-tch 循环，仅追加一次 |
 | 🔐 sanitize 双集合验证 | 区分 `requested_ids` vs `received_ids` 防自验证 |
 | ✅ 测试覆盖 | 110 个测试全部通过 |
+
+---
+
+## 新模块
+
+本次更新新增了 4 个模块，覆盖代码审查、深度研究、定时任务和实时监控能力：
+
+### 🔍 代码审查 (reviewer.py)
+审查 git diff 或单个文件，6 维度分析：Bug、Security、Performance、Style、Best Practice、Logic。
+
+### 📊 深度研究 (researcher.py)
+多源搜索 + 事实核查 + 结构化报告。自动分解问题 → 搜索 → 获取 → 综合分析。
+
+### ⏰ 定时任务 (scheduler.py)
+Cron 表达式调度，后台线程每 30 秒执行一次，支持 PowerShell 命令。
+
+### 👁 实时监控 (watcher.py)
+轮询式文件/日志/进程监控，支持正则匹配，事件回调通知。
+
+## 自动化 CI
+
+| 工作流 | 触发条件 | 功能 |
+|--------|---------|------|
+| [CI](.github/workflows/ci.yml) | push/PR → master/main | 多版本 pytest + 模块导入验证 |
+| [AI Review](.github/workflows/pr-review.yml) | PR → master/main | LLM 自动审查代码变更并评论 |
+
+### 配置 AI 审查
+
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中添加：
+
+| Secret | 说明 | 默认值 |
+|--------|------|--------|
+| `LLM_API_KEY` | API 密钥（**必填**） | — |
+| `LLM_PROVIDER` | 提供商 | `DeepSeek` |
+| `LLM_MODEL` | 模型名 | `deepseek-chat` |
+| `LLM_BASE_URL` | API 地址 | `https://api.deepseek.com` |
+
+配置后，每次 PR 提交都会自动收到 AI 审查评论。
 
 ---
 

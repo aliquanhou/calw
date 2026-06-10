@@ -20,6 +20,9 @@ from .providers import (
     get_provider,
     get_default_provider,
 )
+from .scheduler import get_scheduler
+from .watcher import get_watcher
+from .app_dialogs import CodeReviewDialog, ResearchDialog, SchedulerDialog, WatcherDialog
 
 
 # ── Color / style ──
@@ -417,15 +420,35 @@ class AgentApp(ctk.CTk):
         btn_frame = ctk.CTkFrame(dash, fg_color="transparent")
         btn_frame.grid(row=0, column=5, padx=(8, 16), pady=12, sticky="e")
 
-        ctk.CTkButton(btn_frame, text="Settings", width=80, height=30,
-                      font=(FONT_FAMILY, 12), command=self._open_settings,
+        ctk.CTkButton(btn_frame, text="Settings", width=74, height=30,
+                      font=(FONT_FAMILY, 11), command=self._open_settings,
                       fg_color="#2a2a4a", hover_color="#3a3a5a"
-                      ).grid(row=0, column=0, padx=2)
+                      ).grid(row=0, column=0, padx=1)
 
-        ctk.CTkButton(btn_frame, text="Clear", width=70, height=30,
-                      font=(FONT_FAMILY, 12), command=self._clear_chat,
+        self.btn_review = ctk.CTkButton(btn_frame, text="🔍 审查", width=64, height=30,
+                                        font=(FONT_FAMILY, 11), command=self._open_review,
+                                        fg_color="#2a2a4a", hover_color="#3a3a5a")
+        self.btn_review.grid(row=0, column=1, padx=1)
+
+        self.btn_research = ctk.CTkButton(btn_frame, text="📊 研究", width=64, height=30,
+                                          font=(FONT_FAMILY, 11), command=self._open_research,
+                                          fg_color="#2a2a4a", hover_color="#3a3a5a")
+        self.btn_research.grid(row=0, column=2, padx=1)
+
+        self.btn_schedule = ctk.CTkButton(btn_frame, text="⏰ 定时", width=64, height=30,
+                                          font=(FONT_FAMILY, 11), command=self._open_schedule,
+                                          fg_color="#2a2a4a", hover_color="#3a3a5a")
+        self.btn_schedule.grid(row=0, column=3, padx=1)
+
+        self.btn_watch = ctk.CTkButton(btn_frame, text="👁 监控", width=64, height=30,
+                                       font=(FONT_FAMILY, 11), command=self._open_watch,
+                                       fg_color="#2a2a4a", hover_color="#3a3a5a")
+        self.btn_watch.grid(row=0, column=4, padx=1)
+
+        ctk.CTkButton(btn_frame, text="Clear", width=60, height=30,
+                      font=(FONT_FAMILY, 11), command=self._clear_chat,
                       fg_color="#333", hover_color="#555"
-                      ).grid(row=0, column=1, padx=2)
+                      ).grid(row=0, column=5, padx=1)
 
         # ── Context progress bar (thin, below dashboard) ──
         self.ctx_progress = ctk.CTkProgressBar(dash, height=3, corner_radius=0,
@@ -434,18 +457,16 @@ class AgentApp(ctk.CTk):
         self.ctx_progress.set(0)
 
     def _build_tool_panel(self):
-        """Build the right-side tool panel with vertical stack layout."""
+        """Build the right-side tool panel with tabbed layout (工具 | 日志)."""
         panel = ctk.CTkFrame(self, width=290, corner_radius=8)
         panel.grid(row=1, column=1, sticky="nsew", padx=(2, 10), pady=5)
         panel.grid_propagate(False)
-        panel.grid_rowconfigure(2, weight=2)  # tool tags
-        panel.grid_rowconfigure(4, weight=1)  # activity log
+        panel.grid_rowconfigure(2, weight=1)  # tabview
 
         # ── Header ──
         hdr = ctk.CTkFrame(panel, fg_color="transparent")
         hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 2))
         hdr.grid_columnconfigure(0, weight=1)
-
         ctk.CTkLabel(hdr, text="🛠 工具面板", font=(FONT_FAMILY, 15, "bold"),
                       anchor="w").grid(row=0, column=0, sticky="w")
 
@@ -454,89 +475,70 @@ class AgentApp(ctk.CTk):
         prog_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 2))
         prog_frame.grid_columnconfigure(0, weight=1)
         prog_frame.grid_propagate(False)
-
         self.task_progress = ctk.CTkProgressBar(prog_frame, height=8, corner_radius=4)
         self.task_progress.grid(row=0, column=0, sticky="ew", pady=(2, 0))
         self.task_progress.set(0)
-
         self.task_prog_label = ctk.CTkLabel(prog_frame, text="", font=(FONT_MONO, 9),
                                              text_color="#555", anchor="w")
         self.task_prog_label.grid(row=1, column=0, sticky="w")
 
-        # ── Tool Tags — 分类展示所有工具 ──
-        self.tool_scroll = ctk.CTkScrollableFrame(panel, fg_color="transparent")
-        self.tool_scroll.grid(row=2, column=0, sticky="nsew", padx=8, pady=(4, 2))
+        # ── Tab View: 工具 | 日志 ──
+        self.tab_view = ctk.CTkTabview(panel, fg_color="transparent",
+                                       segmented_button_selected_color="#2a2a4a",
+                                       segmented_button_unselected_color="#222",
+                                       text_color="#e0e0e0",
+                                       segmented_button_selected_hover_color="#3a3a5a")
+        self.tab_view.grid(row=2, column=0, sticky="nsew", padx=4, pady=(4, 4))
+
+        tab_tools = self.tab_view.add("🛠 工具")
+        tab_log = self.tab_view.add("📋 日志")
+
+        # ── Tab: 工具状态 ──
+        self.tool_scroll = ctk.CTkScrollableFrame(tab_tools, fg_color="transparent")
+        self.tool_scroll.pack(fill="both", expand=True, padx=4, pady=4)
         self.tool_scroll.grid_columnconfigure(0, weight=1)
 
         self.tool_widgets: dict[str, dict] = {}
         row_offset = 0
-
         for cat_name, tool_names in TOOL_CATEGORIES:
             cat_color = CATEGORY_COLORS.get(cat_name, "#888")
-
-            # ── Category header row ──
             cat_hdr = ctk.CTkFrame(self.tool_scroll, fg_color="#333333", height=26, corner_radius=4)
             cat_hdr.grid(row=row_offset, column=0, sticky="ew", pady=(6, 1))
             cat_hdr.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(cat_hdr, text=cat_name, font=(FONT_FAMILY, 11, "bold"),
                           text_color=cat_color, anchor="w").grid(row=0, column=0, padx=10, pady=2, sticky="w")
             row_offset += 1
-
-            # ── Tool tag row(s) — 2 tools per row ──
             pairs = [tool_names[i:i+2] for i in range(0, len(tool_names), 2)]
             for pair in pairs:
                 tag_row = ctk.CTkFrame(self.tool_scroll, fg_color="transparent", height=32)
                 tag_row.grid(row=row_offset, column=0, sticky="ew", pady=1)
-                tag_row.grid_columnconfigure(0, weight=1)
-                tag_row.grid_columnconfigure(1, weight=1)
+                tag_row.grid_columnconfigure(0, weight=1), tag_row.grid_columnconfigure(1, weight=1)
                 row_offset += 1
-
                 for ci, tname in enumerate(pair):
                     icon = TOOL_ICONS.get(tname, "🔹")
                     frame = ctk.CTkFrame(tag_row, fg_color="#2a2a2a", corner_radius=6, height=30)
                     frame.grid(row=0, column=ci, sticky="ew", padx=2)
                     frame.grid_propagate(False)
                     frame.grid_columnconfigure(1, weight=1)
-
-                    # Status dot
                     dot = ctk.CTkLabel(frame, text="○", font=(FONT_MONO, 9),
                                        text_color=COLOR_TOOL_IDLE, width=12)
                     dot.grid(row=0, column=0, padx=(6, 2), pady=5)
-
-                    # Icon + name as a bold label
-                    lbl = ctk.CTkLabel(frame, text=f"{icon} {tname}",
-                                       font=(FONT_MONO, 11, "bold"), anchor="w")
-                    lbl.grid(row=0, column=1, padx=0, pady=5, sticky="w")
-
-                    # Description short tag
-                    desc_text = TOOL_DESCRIPTIONS.get(tname, "")
-                    desc_tag = ctk.CTkLabel(frame, text=desc_text,
-                                            font=(FONT_FAMILY, 9), text_color="#666", anchor="e")
-                    desc_tag.grid(row=0, column=2, padx=(2, 6), pady=5)
-
+                    ctk.CTkLabel(frame, text=f"{icon} {tname}",
+                                 font=(FONT_MONO, 11, "bold"), anchor="w"
+                                 ).grid(row=0, column=1, padx=0, pady=5, sticky="w")
+                    ctk.CTkLabel(frame, text=TOOL_DESCRIPTIONS.get(tname, ""),
+                                 font=(FONT_FAMILY, 9), text_color="#666", anchor="e"
+                                 ).grid(row=0, column=2, padx=(2, 6), pady=5)
                     self.tool_widgets[tname] = {"dot": dot, "card": frame}
-
-            # Spacer between categories
             ctk.CTkLabel(self.tool_scroll, text="", font=(FONT_MONO, 3)).grid(row=row_offset, column=0)
             row_offset += 1
 
-        # ── Separator ──
-        ctk.CTkFrame(panel, height=2, fg_color="#333").grid(row=3, column=0, sticky="ew", padx=8, pady=2)
-
-        # ── Activity Log ──
-        log_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 4))
-        log_frame.grid_columnconfigure(0, weight=1)
-        log_frame.grid_rowconfigure(1, weight=1)
-
-        ctk.CTkLabel(log_frame, text="📋 活动日志", font=(FONT_FAMILY, 11, "bold"),
-                      anchor="w", text_color="#888").grid(row=0, column=0, sticky="ew", pady=(2, 2))
-
-        self.activity_log = tk.Text(log_frame, wrap="word", font=(FONT_MONO, 11),
+        # ── Tab: 活动日志 ──
+        self.activity_log = tk.Text(tab_log, wrap="word", font=(FONT_MONO, 11),
                                      bg="#1a1a1a", fg="#aaa", borderwidth=0,
                                      highlightthickness=0, padx=8, pady=6,
                                      state="disabled", relief="flat")
-        self.activity_log.grid(row=1, column=0, sticky="nsew")
+        self.activity_log.pack(fill="both", expand=True, padx=4, pady=4)
         self.activity_log.tag_config("log_idle", foreground="#555")
         self.activity_log.tag_config("log_run", foreground="#FFC107")
         self.activity_log.tag_config("log_done", foreground="#4CAF50")
@@ -1055,6 +1057,26 @@ class AgentApp(ctk.CTk):
         self.msg_label.configure(text="0 轮")
         for t in self.tool_status:
             self._set_tool_status(t, "idle")
+
+    # ── New Feature Dialogs ──
+
+    def _open_review(self):
+        if not self.agent or not self.api_key:
+            self._chat_line("请先配置 API Key", "err")
+            return
+        CodeReviewDialog(self, self.agent, None)
+
+    def _open_research(self):
+        if not self.agent or not self.api_key:
+            self._chat_line("请先配置 API Key", "err")
+            return
+        ResearchDialog(self, self.agent, None)
+
+    def _open_schedule(self):
+        SchedulerDialog(self, get_scheduler())
+
+    def _open_watch(self):
+        WatcherDialog(self, get_watcher())
 
 
 def run():
