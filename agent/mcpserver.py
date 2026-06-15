@@ -9,7 +9,7 @@ class MCPTool:
 @dataclass
 class MCPServerConfig:
     name: str; command: str; args: list[str] = field(default_factory=list)
-    env: dict[str, str] = field(default_factory=dict)
+    description: str = ""; env: dict[str, str] = field(default_factory=dict)
     tools: list[MCPTool] = field(default_factory=list); enabled: bool = True
 _BUILTIN_MCP_SERVERS: dict[str, MCPServerConfig] = {
     "filesystem": MCPServerConfig(name="filesystem", command="npx", args=["-y","@modelcontextprotocol/server-filesystem",os.getcwd()],
