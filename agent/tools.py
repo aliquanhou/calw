@@ -3,7 +3,7 @@ from __future__ import annotations
 import os,time
 from typing import Any
 from .tools_core import (TOOL_DEFINITIONS,BUILTIN_HANDLERS,PLUGIN_HANDLERS,_written_this_session,_agent_spawned_pids,_file_backups,_session_lessons,_consecutive_fails,_last_heal_time,_NODE_MODULES_WARNED,smart_truncate,check_search_scope,classify_tool_result,guard_tool_call,_load_plugins,_TOOL_RESULT_MAX_LENGTH)
-from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_glob,_handle_grep,_handle_revert,_check_references,_run_validation,_restore_backup)
+from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_replace,_handle_glob,_handle_grep,_handle_revert,_check_references,_run_validation,_restore_backup)
 from .tools_shell import (_handle_bash,_handle_system_info,_handle_process,_handle_think,_run_powershell,BuildRunner,_self_heal)
 from .tools_web import (_handle_web,_handle_web_search,_handle_screencap,_handle_ask_user)
 from .tools_browser import (_handle_browser,_browser,_browser_context,_browser_page,_browser_console_logs,_browser_network_errors,_browser_page_errors)
@@ -20,7 +20,7 @@ BUILTIN_HANDLERS.update({
     "browser":_handle_browser,"background":_handle_background,
     "plan":_handle_plan,"task":_handle_task,"ast":_handle_ast,
     "dep_graph":_handle_dep_graph,"call_chain":_handle_call_chain,
-    "revert":_handle_revert,"trace_error":_handle_trace_error,
+    "replace":_handle_replace,"revert":_handle_revert,"trace_error":_handle_trace_error,
 })
 
 def handle_tool_call(name,params,output_callback=None):

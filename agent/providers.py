@@ -408,6 +408,23 @@ class OpenAIProvider(LLMProvider):
             yield StreamEvent(type="done", stop_reason="end_turn")
 
 
+# ── Token/Cost Tracking ──
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-7":{"input":15.00,"output":75.00},"claude-sonnet-4-6":{"input":3.00,"output":15.00},
+    "claude-haiku-4-5":{"input":0.80,"output":4.00},"deepseek-chat":{"input":0.27,"output":1.10},
+    "deepseek-reasoner":{"input":0.55,"output":2.19},"gpt-4o":{"input":2.50,"output":10.00},"gpt-4o-mini":{"input":0.15,"output":0.60},
+}
+_usage: dict[str,int]={"input_tokens":0,"output_tokens":0,"calls":0}
+def reset_usage():_usage["input_tokens"]=0;_usage["output_tokens"]=0;_usage["calls"]=0
+def track_usage(it:int,ot:int):_usage["input_tokens"]+=it;_usage["output_tokens"]+=ot;_usage["calls"]+=1
+def get_usage_summary()->str:
+    c=_usage["calls"]
+    if c==0:return"暂无API调用"
+    i=_usage["input_tokens"];o=_usage["output_tokens"]
+    return f"API调用:{c}次\nToken:{i:,}入+{o:,}出={(i+o):,}\n费用:${i/1e6*3.00+o/1e6*15.00:.4f}"
+def estimate_cost(m:str,i:int,o:int)->float:
+    p=MODEL_PRICING.get(m,{"input":3.00,"output":15.00});return(i/1e6*p["input"])+(o/1e6*p["output"])
+
 # ──────────────────────────────────────────────
 # Provider Registry
 # ──────────────────────────────────────────────

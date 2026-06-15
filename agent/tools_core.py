@@ -34,6 +34,7 @@ TOOL_DEFINITIONS=[
     {"name":"web_search","description":"网络搜索。","input_schema":{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer"}},"required":["query"]}},
     {"name":"ask_user","description":"提问。","input_schema":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"string"}},"required":["question"]}},
     {"name":"trace_error","description":"错误分析。","input_schema":{"type":"object","properties":{"error_message":{"type":"string"},"file_path":{"type":"string"},"depth":{"type":"integer"}},"required":["error_message"]}},
+    {"name":"replace","description":"SEARCH/REPLACE: 模糊搜索替换。","input_schema":{"type":"object","properties":{"file_path":{"type":"string"},"search":{"type":"string"},"replace_text":{"type":"string"},"partial":{"type":"boolean"}},"required":["file_path","search","replace_text"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text

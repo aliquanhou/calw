@@ -108,6 +108,28 @@ def _handle_edit(file_path,old_string,new_string):
             if fp in k:del _consecutive_fails[k]
         return r
     except Exception as e:return f"写入出错:{e}"
+
+def _handle_replace(file_path,search,replace_text,partial=False):
+    fp=os.path.normpath(os.path.abspath(file_path))
+    if os.name=="nt"and len(fp)>=2 and fp[1]==":":fp=fp[0].upper()+fp[1:]
+    if not os.path.exists(fp):return f"错误:文件不存在:{fp}"
+    try:content=open(fp,"r",encoding="utf-8").read()
+    except Exception as e:return f"读取出错:{e}"
+    if not partial and content.count(search)==1:return _handle_edit(file_path,search,replace_text)
+    search_lines=[l.strip()for l in search.split('\n')if l.strip()]
+    content_lines=content.split('\n')
+    best_idx=-1;best_score=0
+    for i in range(len(content_lines)-len(search_lines)+1):
+        score=sum(1 for j,s in enumerate(search_lines)if s in content_lines[i+j]or content_lines[i+j].strip()==s)
+        if score>best_score:best_score=score;best_idx=i
+    if best_idx<0 or best_score<len(search_lines)*0.5:return f"错误:无法定位匹配内容(最佳{best_score}/{len(search_lines)})"
+    _file_backups[fp]=content
+    new_lines=content_lines[:best_idx]+[replace_text]+content_lines[best_idx+len(search_lines):]
+    try:
+        open(fp,"w",encoding="utf-8").write('\n'.join(new_lines))
+        return f"成功替换1处(模糊匹配,置信度{best_score}/{len(search_lines)})"
+    except Exception as e:return f"写入出错:{e}"
+
 def _handle_glob(pattern,path=None):
     root=os.path.abspath(path)if path else os.getcwd()
     if os.name=="nt":root=root.replace("\\","/")
