@@ -346,102 +346,48 @@ class Agent:
             # ── Execute tools ──
             # Execute tool calls regardless of stop_reason
             # (some APIs may not set finish_reason="tool_calls" in streaming)
+            # ── Execute tools (parallel for read-only tools) ──
+            _READONLY = {'read','glob','grep','think','web','web_search','ast','dep_graph','call_chain','system_info','process'}
             if tool_calls_for_history:
                 handler.on_turn_plan(len(tool_calls_for_history))
                 tool_results: list[dict] = []
-                for tch in tool_calls_for_history:
-                    fn = tch["function"]
-                    name = fn["name"]
-                    try:
-                        tool_input = json.loads(fn["arguments"]) if fn["arguments"] else {}
-                    except json.JSONDecodeError:
-                        tool_input = {}
-
-                    handler.on_tool_start(name, tool_input)
-
-                    # Capture output_callback for streaming tool output
-                    output_cb = getattr(handler, 'on_tool_output', None)
-
-                    def _call_with_output_cb():
-                        return handle_tool_call(name, tool_input, output_callback=output_cb)
-
-                    try:
-                        result = _call_with_timeout(_call_with_output_cb, 300)
-                    except TimeoutError:
-                        # Self-heal: try to clean up environment on timeout
-                        heal_msg = ""
-                        try:
-                            from .tools import _self_heal
-                            heal_report = _self_heal()
-                            if heal_report:
-                                heal_msg = "\n" + heal_report
-                        except Exception:
-                            pass
-                        result = f"错误: 工具 '{name}' 执行超时 (300s){heal_msg}"
-                        handler.on_error(f"工具 '{name}' 超时")
-                    except Exception as e:
-                        result = f"工具执行错误: {e}"
-
-                    handler.on_tool_result(result)
-                    tool_results.append({
-                        "tool_call_id": tch["id"],
-                        "_tool_name": name,
-                        "content": result,
-                    })
-
-                    # ── Task state machine: structured result analysis ──
-                    error_types_this_turn = []
-                    for tr in tool_results:
-                        content = tr.get("content") or ""
-                        from .tools import classify_tool_result
-                        analysis = classify_tool_result(tr.get("_tool_name", ""), content)
-
-                        if not analysis["success"]:
-                            self._fail_streak += 1
-                            self._fail_history.append({
-                                "tool": tr.get("_tool_name", ""),
-                                "error_type": analysis["error_type"],
-                                "detail": content[:150],
-                                "suggestion": analysis["suggestion"],
-                            })
-                            error_types_this_turn.append(analysis["error_type"])
-
-                            # Strategy tracking: detect same error type repeating
-                            if analysis["error_type"] == self._last_error_type and analysis["error_type"] != "ok":
-                                self._same_error_count += 1
-                            else:
-                                self._same_error_count = 1
-                                self._last_error_type = analysis["error_type"]
-
-                            # Block repeated strategies
-                            if self._same_error_count >= 2 and analysis["error_type"]:
-                                block_key = f"{tr.get('_tool_name', '')}:{analysis['error_type']}"
-                                if block_key not in self._blocked_strategies:
-                                    self._blocked_strategies.append(block_key)
-
-                            # Generate progressive TODOs
-                            if self._fail_streak == 2:
-                                etype = analysis["error_type"]
-                                if etype == "file_not_found":
-                                    todo = f"[TODO] 文件路径错误连续 {self._fail_streak} 次。不要再尝试猜测路径，先用 glob 搜索正确路径。"
-                                elif etype == "no_results":
-                                    todo = f"[TODO] 搜索无结果连续 {self._fail_streak} 次。换个搜索词或搜索目录。"
-                                else:
-                                    todo = f"[TODO] 连续失败 {self._fail_streak} 次 ({analysis['error_type']})，需要换方案。错误: {content[:80]}"
-                                self._pending_todos.append(todo)
-                            elif self._fail_streak >= 3:
-                                # Stronger: inject approach-level reflection
-                                error_summary = "; ".join(
-                                    f"{f['tool']}:{f['error_type']}" for f in self._fail_history[-3:]
-                                )
-                                todo = f"[BLOCKER] 连续失败 {self._fail_streak} 次。已尝试: {error_summary}\n建议: 退一步重新分析问题，不要继续当前方案。"
-                                self._pending_todos.append(todo)
-                        else:
-                            self._fail_streak = 0  # reset streak on success
-                            self._same_error_count = 0
-                            self._last_error_type = ""
-
-                    # ── Build structured feedback for next model turn ──
+                parallel = [tch for tch in tool_calls_for_history if tch["function"]["name"] in _READONLY]
+                sequential = [tch for tch in tool_calls_for_history if tch["function"]["name"] not in _READONLY]
+                if parallel:
+                    def _exec(tch: dict) -> dict:
+                        fn=tch["function"];name=fn["name"]
+                        try:inp=json.loads(fn["arguments"])if fn["arguments"]else{}
+                        except:inp={}
+                        handler.on_tool_start(name,inp);oc=getattr(handler,'on_tool_output',None)
+                        try:r=_call_with_timeout(lambda:handle_tool_call(name,inp,output_callback=oc),300)
+                        except TimeoutError:r=f"错误:工具'{name}'超时(300s)"
+                        except Exception as e:r=f"工具执行错误:{e}"
+                        handler.on_tool_result(r);return{"tool_call_id":tch["id"],"_tool_name":name,"content":r}
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(parallel),8))as pool:
+                        for fut in concurrent.futures.as_completed({pool.submit(_exec,tch):tch for tch in parallel}):
+                            tool_results.append(fut.result())
+                for tch in sequential:
+                    fn=tch["function"];name=fn["name"]
+                    try:inp=json.loads(fn["arguments"])if fn["arguments"]else{}
+                    except:inp={}
+                    handler.on_tool_start(name,inp);oc=getattr(handler,'on_tool_output',None)
+                    try:r=_call_with_timeout(lambda:handle_tool_call(name,inp,output_callback=oc),300)
+                    except TimeoutError:r=f"错误:工具'{name}'超时(300s)"
+                    except Exception as e:r=f"工具执行错误:{e}"
+                    handler.on_tool_result(r);tool_results.append({"tool_call_id":tch["id"],"_tool_name":name,"content":r})
+                for tr in tool_results:
+                    content=tr.get("content")or""
+                    from.tools import classify_tool_result
+                    a=classify_tool_result(tr.get("_tool_name",""),content)
+                    if not a["success"]:
+                        self._fail_streak+=1;self._fail_history.append({"tool":tr.get("_tool_name",""),"error_type":a["error_type"],"detail":content[:150],"suggestion":a["suggestion"]})
+                        if a["error_type"]==self._last_error_type and a["error_type"]!="ok":self._same_error_count+=1
+                        else:self._same_error_count=1;self._last_error_type=a["error_type"]
+                        if self._same_error_count>=2 and a["error_type"]:
+                            bk=f"{tr.get('_tool_name','')}:{a['error_type']}"
+                            if bk not in self._blocked_strategies:self._blocked_strategies.append(bk)
+                        if self._fail_streak>=2:self._pending_todos.append(f"[TODO]连续失败{self._fail_streak}次,换方案。")
+                    else:self._fail_streak=0;self._same_error_count=0;self._last_error_type=""
                 # ── All tools executed: append results ONCE, outside for-tch loop ──
                 provider_results = self.provider.make_tool_result_messages(tool_results)
                 self.messages.extend(provider_results)

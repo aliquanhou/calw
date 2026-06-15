@@ -19,12 +19,40 @@ class FileWatcher:
     def __init__(self, poll=1.0):
         self._targets={}; self._snapshots={}; self._lock=threading.Lock()
         self._running=False; self._thread=None; self._on_event=None; self._poll=poll; self._counter=0
+        self._wd_observer=None
 
     def start(self, on_event=None):
         if self._running: return
-        self._running=True; self._on_event=on_event; self._thread=threading.Thread(target=self._loop,daemon=True); self._thread.start()
+        self._running=True; self._on_event=on_event
+        if self._try_watchdog(): return
+        self._thread=threading.Thread(target=self._loop,daemon=True); self._thread.start()
 
-    def stop(self): self._running=False
+    def stop(self):
+        self._running=False
+        if self._wd_observer:
+            try:self._wd_observer.stop()
+            except:pass
+            self._wd_observer=None
+
+    def _try_watchdog(self) -> bool:
+        try:
+            import watchdog.observers as wo, watchdog.events as we
+            paths=set()
+            with self._lock:
+                for t in self._targets.values():
+                    if t.kind in("file","directory","log"): paths.add(os.path.dirname(t.path)if os.path.isfile(t.path)else t.path)
+            if not paths: return False
+            class H(we.FileSystemEventHandler):
+                def __init__(s2,w):s2.w=w
+                def on_modified(s2,ev):
+                    if not ev.is_directory:s2.w._fire(WatchEvent("wd","wd","mod",ev.src_path))
+                def on_created(s2,ev):s2.w._fire(WatchEvent("wd","wd","create",ev.src_path))
+                def on_deleted(s2,ev):s2.w._fire(WatchEvent("wd","wd","delete",ev.src_path))
+            self._wd_observer=wo.Observer()
+            for p in paths: self._wd_observer.schedule(H(self),p,recursive=True)
+            self._wd_observer.start(); return True
+        except ImportError: return False
+        except: return False
 
     def add_watch(self,name,kind,path,pattern=""):
         with self._lock:
