@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["agent", "agent.utils", "agent.plugins", "agent.build_patterns"]
+packages = ["agent", "agent.plugins", "agent.build_patterns"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
