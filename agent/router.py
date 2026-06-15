@@ -1,6 +1,15 @@
 """router — 智能模型路由：按任务类型自动选择最优模型。"""
 from __future__ import annotations
-from .providers import MODEL_PRICING
+# 内联价格数据（与 providers.py MODEL_PRICING 同步）
+_MODEL_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus-4-7":     {"input": 15.00, "output": 75.00},
+    "claude-sonnet-4-6":   {"input": 3.00,  "output": 15.00},
+    "claude-haiku-4-5":    {"input": 0.80,  "output": 4.00},
+    "deepseek-chat":       {"input": 0.27,  "output": 1.10},
+    "deepseek-reasoner":   {"input": 0.55,  "output": 2.19},
+    "gpt-4o":              {"input": 2.50,  "output": 10.00},
+    "gpt-4o-mini":         {"input": 0.15,  "output": 0.60},
+}
 _TASK_PATTERNS: dict[str, list[str]] = {
     "simple": ["grep","glob","read","search","list","ls","find","where","简单的","快速","给我","多少","什么","哪个"],
     "code_gen": ["write","create","implement","重构","实现","编写","创建","写一个","生成","新建","function","class"],
@@ -35,6 +44,6 @@ def compare_models(user_input: str, available_models: list[str]) -> list[dict]:
     for m in available_models:
         if m in _MODEL_RANK:
             results.append({"model": m, "tier": _MODEL_RANK[m], "match": abs(_MODEL_RANK[m] - target),
-                           "cost": MODEL_PRICING.get(m, {}).get("input", 3.0)})
+                           "cost": _MODEL_PRICING.get(m, {}).get("input", 3.0)})
     results.sort(key=lambda x: (x["match"], x["cost"]))
     return results

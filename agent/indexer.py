@@ -35,7 +35,7 @@ class Indexer:
                 idx.words = Counter(_WORD_RE.findall(content.lower()))
                 if ext == ".py":
                     for m in re.finditer(r'^(?:from|import)\s+(\S+)', content, re.MULTILINE): idx.imports.append(m.group(1))
-                    for m in re.finditer(r'^(?:class|def|async def)\s+(\w+)', content, re.MULTILINE): idx.symbols.append(m.group(1))
+                    for m in re.finditer(r'^\s*(?:class|def|async def)\s+(\w+)', content, re.MULTILINE): idx.symbols.append(m.group(1))
                 for word, count in idx.words.items():
                     if count >= 2: inverted[word].add(fpath)
                 files[fpath] = idx
@@ -49,7 +49,7 @@ class Indexer:
         n_docs = len(files); scores: dict[str, float] = Counter()
         for word in words:
             if word not in inverted: continue
-            idf = math.log(n_docs / (len(inverted[word]) + 1))
+            idf = math.log(1 + n_docs / (1 + len(inverted[word])))
             for fpath in inverted[word]:
                 scores[fpath] += math.log(1 + files[fpath].words.get(word, 0)) * idf
         for word in words:
