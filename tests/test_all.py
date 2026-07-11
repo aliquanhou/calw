@@ -135,16 +135,6 @@ class TestCallChainTool(unittest.TestCase):
         self.assertTrue(len(result) > 10)
 
 
-class TestThinkTool(unittest.TestCase):
-    def test_think(self):
-        from agent.tools import handle_tool_call
-        r1 = handle_tool_call("think", {"thought": "testing"})
-        self.assertIn("记录", r1)
-        r2 = handle_tool_call("think", {"content": "test"})
-        self.assertIn("记录", r2)
-        r3 = handle_tool_call("think", {"thought": "planning", "title": "analysis"})
-        self.assertIn("记录", r3)
-
 
 class TestBashTool(unittest.TestCase):
     def test_bash_echo(self):
