@@ -52,62 +52,112 @@ def _handle_read(file_path):
     try:
         with open(fp,"r",encoding="utf-8",errors="replace")as f:return smart_truncate(f.read(),_TOOL_RESULT_MAX_LENGTH)
     except Exception as e:return f"读取出错:{e}"
-def _handle_write(file_path,content):
-    fp=os.path.normpath(os.path.abspath(file_path))
-    if os.name=="nt"and len(fp)>=2 and fp[1]==":":fp=fp[0].upper()+fp[1:]
-    d=os.path.dirname(fp)
-    if d:os.makedirs(d,exist_ok=True)
-    oc=None
-    if os.path.exists(fp):
-        try:oc=open(fp,"r",encoding="utf-8").read()
-        except:pass
-    _file_backups[fp]=oc;ch=hashlib.md5(content.encode("utf-8")).hexdigest();fk=f"{fp}:{ch}"
-    if fk in _written_this_session:return f"相同内容已写入过{fp}。"
+def _make_diff(old: str, new: str, filepath: str, max_lines: int = 20) -> str:
+    """Generate a unified diff string between old and new content."""
+    old_lines = old.split("\n") if old else []
+    new_lines = new.split("\n") if new else []
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=filepath, tofile=filepath,
+        lineterm="", n=2,
+    ))
+    if not diff:
+        return "[无差异]"
+    output = "\n".join(diff[:max_lines])
+    if len(diff) > max_lines:
+        output += f"\n... (diff 共 {len(diff)} 行)"
+    return output
+
+def _handle_write(file_path, content):
+    fp = os.path.normpath(os.path.abspath(file_path))
+    if os.name == "nt" and len(fp) >= 2 and fp[1] == ":":
+        fp = fp[0].upper() + fp[1:]
+    d = os.path.dirname(fp)
+    if d: os.makedirs(d, exist_ok=True)
+    oc = None
+    is_update = os.path.exists(fp)
+    if is_update:
+        try: oc = open(fp, "r", encoding="utf-8").read()
+        except: pass
+    _file_backups[fp] = oc
+    ch = hashlib.md5(content.encode("utf-8")).hexdigest()
+    fk = f"{fp}:{ch}"
+    if fk in _written_this_session:
+        return f"相同内容已写入过{fp}。"
     _written_this_session.add(fk)
     try:
-        open(fp,"w",encoding="utf-8").write(content)
-        r=f"成功写入{len(content.encode('utf-8'))}字节到{fp}"
-        he,ws=_rv(fp)
+        open(fp, "w", encoding="utf-8").write(content)
+        r = ""
+        if is_update and oc is not None:
+            diff = _make_diff(oc, content, fp)
+            r += f"📝 {fp}\n{diff}\n"
+        r += f"✅ 写入完成: {len(content.encode('utf-8'))} 字节"
+        he, ws = _rv(fp)
         if he:
-            _rb(fp);_consecutive_fails[fk]=_consecutive_fails.get(fk,0)+1
-            _session_lessons.append({"type":"write_failed","file":fp,"hash":ch,"error":he[:200],"attempt":_consecutive_fails[fk],"timestamp":__import__('time').time()})
-            return f"验证失败:已回滚\n{he}"+(f"\n[教训#{_consecutive_fails[fk]}]需换方案"if _consecutive_fails[fk]>=2 else"")
-        if ws:r+=f"\n{ws}"
-        refs=_cr(fp)
-        if refs:r+=f"\n{len(refs)}个文件可能引用:"+''.join(f"\n  {ref}"for ref in refs[:6])
+            _rb(fp); _consecutive_fails[fk] = _consecutive_fails.get(fk, 0) + 1
+            _session_lessons.append({"type": "write_failed", "file": fp, "hash": ch,
+                                      "error": he[:200], "attempt": _consecutive_fails[fk],
+                                      "timestamp": __import__("time").time()})
+            return f"验证失败:已回滚\n{he}" + (f"\n[教训#{_consecutive_fails[fk]}]需换方案" if _consecutive_fails[fk] >= 2 else "")
+        if ws: r += f"\n{ws}"
+        refs = _cr(fp)
+        if refs:
+            r += "\n" + f"\n{len(refs)}个文件可能引用:" + "".join(f"\n  {r}" for r in refs[:6])
         for k in list(_consecutive_fails.keys()):
-            if fp in k:del _consecutive_fails[k]
+            if fp in k: del _consecutive_fails[k]
         return r
-    except Exception as e:return f"写入出错:{e}"
-def _handle_edit(file_path,old_string,new_string):
-    fp=os.path.normpath(os.path.abspath(file_path))
-    if os.name=="nt"and len(fp)>=2 and fp[1]==":":fp=fp[0].upper()+fp[1:]
-    if not os.path.exists(fp):return f"错误:文件不存在:{fp}"
-    try:content=open(fp,"r",encoding="utf-8").read()
-    except Exception as e:return f"读取出错:{e}"
-    c=content.count(old_string)
-    if c==0:return f"错误:未找到替换字符串:{fp}"
-    if c>1:return f"错误:字符串出现{c}次,必须唯一"
-    _file_backups[fp]=content;nc=content.replace(old_string,new_string);ch=hashlib.md5(nc.encode("utf-8")).hexdigest()
+    except Exception as e:
+        return f"写入出错:{e}"
+def _handle_edit(file_path, old_string, new_string):
+    fp = os.path.normpath(os.path.abspath(file_path))
+    if os.name == "nt" and len(fp) >= 2 and fp[1] == ":":
+        fp = fp[0].upper() + fp[1:]
+    if not os.path.exists(fp):
+        return f"错误:文件不存在:{fp}"
     try:
-        open(fp,"w",encoding="utf-8").write(nc)
-        try:v=open(fp,"r",encoding="utf-8").read()
-        except:v=""
+        content = open(fp, "r", encoding="utf-8").read()
+    except Exception as e:
+        return f"读取出错:{e}"
+    c = content.count(old_string)
+    if c == 0:
+        return f"错误:未找到替换字符串:{fp}"
+    if c > 1:
+        return f"错误:字符串出现{c}次,必须唯一"
+    _file_backups[fp] = content
+    nc = content.replace(old_string, new_string)
+    ch = hashlib.md5(nc.encode("utf-8")).hexdigest()
+    diff = _make_diff(content, nc, fp)
+    try:
+        open(fp, "w", encoding="utf-8").write(nc)
+        try:
+            v = open(fp, "r", encoding="utf-8").read()
+        except:
+            v = ""
         if old_string in v:
             try:
-                open(fp,"w",encoding="utf-8").write(nc);v2=open(fp,"r",encoding="utf-8").read()
-                if old_string in v2:return f"写入后验证仍失败,请用write重写。"
-            except Exception as e:return f"写入失败(重试):{e}"
-        r="成功替换1处"
-        he,ws=_rv(fp)
-        if he:_rb(fp);_consecutive_fails[f"edit:{fp}:{ch}"]=_consecutive_fails.get(f"edit:{fp}:{ch}",0)+1;return f"验证失败:已回滚\n{he}"
-        if ws:r+=f"\n{ws}"
-        refs=_cr(fp)
-        if refs:r+=f"\n{len(refs)}个文件可能引用:"+''.join(f"\n  {ref}"for ref in refs[:6])
+                open(fp, "w", encoding="utf-8").write(nc)
+                v2 = open(fp, "r", encoding="utf-8").read()
+                if old_string in v2:
+                    return f"写入后验证仍失败,请用write重写。"
+            except Exception as e:
+                return f"写入失败(重试):{e}"
+        r = f"✅ 编辑成功 (1处)\n{diff}"
+        he, ws = _rv(fp)
+        if he:
+            _rb(fp)
+            _consecutive_fails[f"edit:{fp}:{ch}"] = _consecutive_fails.get(f"edit:{fp}:{ch}", 0) + 1
+            return f"验证失败:已回滚\n{he}"
+        if ws:
+            r += f"\n{ws}"
+        refs = _cr(fp)
+        if refs:
+            r += f"\n{len(refs)}个文件可能引用:" + "".join(f"\n  {r}" for r in refs[:6])
         for k in list(_consecutive_fails.keys()):
-            if fp in k:del _consecutive_fails[k]
+            if fp in k:
+                del _consecutive_fails[k]
         return r
-    except Exception as e:return f"写入出错:{e}"
+    except Exception as e:
+        return f"写入出错:{e}"
 
 # ── SEARCH/REPLACE 引擎 ──────────────────────────────────────
 # 多策略智能替换：精确匹配 → 锚点匹配 → 模糊行匹配 → 行号引用

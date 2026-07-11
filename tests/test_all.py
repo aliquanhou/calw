@@ -73,7 +73,7 @@ class TestWriteEditTool(unittest.TestCase):
             "old_string": "new content",
             "new_string": "edited content",
         })
-        self.assertIn("替换", r3)  # edit returns success msg in Chinese
+        self.assertIn("编辑成功", r3)  # edit returns success msg in Chinese
         # Verify via read
         r4 = handle_tool_call("read", {"file_path": self.tmp.name})
         self.assertIn("edited", r4)
