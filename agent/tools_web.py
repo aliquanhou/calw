@@ -1,7 +1,6 @@
 """tools_web"""
 from __future__ import annotations
 import json,urllib.request,urllib.error
-from.tools_shell import _run_powershell
 def _handle_web(url,method="GET",data=None,headers=None):
     try:
         req=urllib.request.Request(url,method=method)
@@ -69,7 +68,3 @@ def _handle_ask_user(question, options="", analysis="", recommended=""):
     lines.append("💬 请回复你的选择（输入 A/B/C... 或直接说）")
     lines.append("=" * 50)
     return "\n".join(lines)
-def _handle_screencap():
-    r=_run_powershell('Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;try{$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$bm=New-Object System.Drawing.Bitmap $b.Width,$b.Height;$g=[System.Drawing.Graphics]::FromImage($bm);$g.CopyFromScreen($b.X,$b.Y,0,0,$b.Size);$ms=New-Object System.IO.MemoryStream;$bm.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())}catch{"SCREENSHOT_ERROR: $_"}')
-    if r.startswith("SCREENSHOT_ERROR"):return f"截图失败:{r.replace('SCREENSHOT_ERROR: ','')}"
-    return f"[SCREENSHOT base64 len={len(r)}]\n{r}"if len(r)>=100 else f"截图失败:{r}"
