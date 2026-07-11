@@ -47,6 +47,7 @@ _TOOL_ICONS = {
     "ast": "\U0001f52c", "dep_graph": "\U0001f517", "call_chain": "\U0001f517",
     "revert": "⏪", "system_info": "\U0001f5a5", "process": "⚙️",
     "background": "⏳", "trace_error": "\U0001f41b",
+    "test": "\U0001f9ea",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -58,6 +59,7 @@ _TOOL_VERBS = {
     "ast": "AST 分析", "dep_graph": "依赖分析", "call_chain": "调用链",
     "revert": "撤销更改", "system_info": "系统信息", "process": "进程管理",
     "background": "后台任务", "trace_error": "错误追踪",
+    "test": "测试驱动",
 }
 
 

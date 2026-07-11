@@ -35,6 +35,7 @@ TOOL_DEFINITIONS=[
     {"name":"ask_user","description":"提问。","input_schema":{"type":"object","properties":{"question":{"type":"string"},"options":{"type":"string"}},"required":["question"]}},
     {"name":"trace_error","description":"错误分析。","input_schema":{"type":"object","properties":{"error_message":{"type":"string"},"file_path":{"type":"string"},"depth":{"type":"integer"}},"required":["error_message"]}},
     {"name":"replace","description":"SEARCH/REPLACE: 模糊搜索替换。","input_schema":{"type":"object","properties":{"file_path":{"type":"string"},"search":{"type":"string"},"replace_text":{"type":"string"},"partial":{"type":"boolean"}},"required":["file_path","search","replace_text"]}},
+    {"name":"test","description":"测试驱动：发现/运行测试并解析结果。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["discover","run"]},"path":{"type":"string"},"test_name":{"type":"string"},"timeout":{"type":"integer"}},"required":["action"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text

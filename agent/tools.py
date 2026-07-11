@@ -9,6 +9,7 @@ from .tools_web import (_handle_web,_handle_web_search,_handle_screencap,_handle
 from .tools_browser import (_handle_browser,_browser,_browser_context,_browser_page,_browser_console_logs,_browser_network_errors,_browser_page_errors)
 from .tools_plan import (_handle_background,_handle_plan,_handle_task,_handle_project_memory,_background_tasks,_plans)
 from .tools_analysis import (_handle_ast,_handle_dep_graph,_handle_call_chain,_handle_trace_error,_find_cycles)
+from .tools_test import _handle_test
 
 BUILTIN_HANDLERS.update({
     "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
@@ -21,6 +22,7 @@ BUILTIN_HANDLERS.update({
     "plan":_handle_plan,"task":_handle_task,"ast":_handle_ast,
     "dep_graph":_handle_dep_graph,"call_chain":_handle_call_chain,
     "replace":_handle_replace,"revert":_handle_revert,"trace_error":_handle_trace_error,
+    "test":_handle_test,
 })
 
 def handle_tool_call(name,params,output_callback=None):
