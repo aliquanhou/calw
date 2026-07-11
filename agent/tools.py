@@ -4,8 +4,8 @@ import os,time
 from typing import Any
 from .tools_core import (TOOL_DEFINITIONS,BUILTIN_HANDLERS,PLUGIN_HANDLERS,_written_this_session,_agent_spawned_pids,_file_backups,_session_lessons,_consecutive_fails,_last_heal_time,_NODE_MODULES_WARNED,smart_truncate,check_search_scope,classify_tool_result,guard_tool_call,_load_plugins,_TOOL_RESULT_MAX_LENGTH)
 from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_replace,_handle_glob,_handle_grep,_handle_revert,_handle_move,_handle_copy,_handle_delete,_handle_mkdir,_handle_download,_check_references,_run_validation,_restore_backup)
-from .tools_shell import (_handle_bash,_handle_system_info,_handle_process,_handle_think,_run_powershell,BuildRunner,_self_heal)
-from .tools_web import (_handle_web,_handle_web_search,_handle_screencap,_handle_ask_user)
+from .tools_shell import (_handle_bash,_run_powershell,BuildRunner,_self_heal)
+from .tools_web import (_handle_web,_handle_web_search,_handle_ask_user)
 from .tools_browser import (_handle_browser,_browser,_browser_context,_browser_page,_browser_console_logs,_browser_network_errors,_browser_page_errors)
 from .tools_plan import (_handle_background,_handle_plan,_handle_task,_handle_project_memory,_background_tasks,_plans)
 from .tools_analysis import (_handle_ast,_handle_dep_graph,_handle_call_chain,_handle_trace_error,_find_cycles)
@@ -17,10 +17,9 @@ from .tools_extra import _handle_schedule, _handle_watch, _handle_websocket
 BUILTIN_HANDLERS.update({
     "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
     "glob":_handle_glob,"grep":_handle_grep,"bash":_handle_bash,
-    "think":_handle_think,"project_memory":_handle_project_memory,
-    "system_info":_handle_system_info,"process":_handle_process,
+    "project_memory":_handle_project_memory,
     "web":_handle_web,"web_search":_handle_web_search,
-    "ask_user":_handle_ask_user,"screencap":_handle_screencap,
+    "ask_user":_handle_ask_user,
     "browser":_handle_browser,"background":_handle_background,
     "plan":_handle_plan,"task":_handle_task,"ast":_handle_ast,
     "dep_graph":_handle_dep_graph,"call_chain":_handle_call_chain,
@@ -46,7 +45,7 @@ def handle_tool_call(name,params,output_callback=None):
     allowed,guard_msg=guard_tool_call(name,params)
     if not allowed: return f"已阻止: {guard_msg}"
     global _last_heal_time; now=time.time()
-    if now-_last_heal_time>60 and name not in('think','read','glob'):
+    if now-_last_heal_time>60 and name not in('read','glob'):
         _last_heal_time=now
         try: _self_heal()
         except: pass
