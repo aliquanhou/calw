@@ -82,7 +82,6 @@ class BuildRunner:
                         pi=int(p)
                         if pi not in _agent_spawned_pids:subprocess.run(['taskkill','/F','/PID',str(pi)],capture_output=True,timeout=5)
         except:pass
-def _handle_think(thought="",content="",title=""):return"已记录。"
 def _run_powershell(script):
     try:
         p=subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,errors='replace',timeout=30)
@@ -150,16 +149,3 @@ def _handle_bash(command,timeout=120,output_callback=None):
         return smart_truncate(r,_TOOL_RESULT_MAX_LENGTH)or"(无输出)"
     except subprocess.TimeoutExpired:return f"命令超时({timeout}秒)"
     except Exception as e:return f"执行错误:{e}"
-def _handle_system_info(category="all"):
-    ss={"os":"Get-CimInstance Win32_OperatingSystem|Format-List Caption,Version,BuildNumber,OSArchitecture,LastBootUpTime,InstallDate","cpu":"Get-CimInstance Win32_Processor|Format-List Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed,Manufacturer","memory":"Get-CimInstance Win32_ComputerSystem|Format-List TotalPhysicalMemory; Get-CimInstance Win32_OperatingSystem|Format-List FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory","disk":"Get-CimInstance Win32_LogicalDisk -Filter'DriveType=3'|Format-Table DeviceID,Size,FreeSpace,@{n='Free%';e={[math]::Round($_.FreeSpace/$_.Size*100,1)}}-AutoSize","network":"Get-CimInstance Win32_NetworkAdapter|Where-Object{$_.NetEnabled}|Format-Table Name,MACAddress,Speed,NetConnectionStatus-AutoSize","software":"Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*|Select-Object DisplayName,DisplayVersion,Publisher|Where-Object{$_.DisplayName}|Format-Table-AutoSize","environment":"Get-ChildItem Env:|Format-Table Name,Value-AutoSize"}
-    if category=="all":return"\n\n".join(f"==={c.upper()}===\n{_run_powershell(s)}"for c,s in ss.items())
-    s=ss.get(category)
-    return _run_powershell(s)if s else f"未知:{category}"
-def _handle_process(action,name=None,pid=None):
-    if action=="list":return _run_powershell("Get-Process|Sort-Object CPU-Descending|Select-Object-First 50 Id,ProcessName,CPU,WorkingSet64,StartTime|Format-Table-AutoSize")
-    elif action=="search":return _run_powershell(f"Get-Process -Name'{name}'-ErrorAction SilentlyContinue|Format-Table Id,ProcessName,CPU,WorkingSet64-AutoSize")if name else"需要名称"
-    elif action=="kill":
-        if name:return _run_powershell(f"Stop-Process -Name'{name}'-Force -ErrorAction Stop;echo'已终止:{name}'")
-        elif pid:return _run_powershell(f"Stop-Process -Id{pid}-Force -ErrorAction Stop;echo'已终止PID:{pid}'")
-        return"需要name或pid"
-    return f"未知:{action}"
