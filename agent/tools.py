@@ -13,6 +13,7 @@ from .tools_test import _handle_test
 from .tools_deps import _handle_deps
 from .tools_system import _handle_service, _handle_registry, _handle_process_v2, _handle_gui, _handle_monitor
 from .tools_extra import _handle_schedule, _handle_watch, _handle_websocket
+from .tools_memory import _handle_remember
 
 BUILTIN_HANDLERS.update({
     "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
@@ -39,6 +40,7 @@ BUILTIN_HANDLERS.update({
     "schedule":_handle_schedule,
     "watch":_handle_watch,
     "websocket":_handle_websocket,
+    "remember":_handle_remember,
 })
 
 def handle_tool_call(name,params,output_callback=None):

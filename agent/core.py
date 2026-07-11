@@ -61,6 +61,7 @@ _TOOL_ICONS = {
     "schedule": "⏰",
     "watch": "\U0001f441",
     "websocket": "\U0001f517",
+    "remember": "\U0001f9e0",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -86,6 +87,7 @@ _TOOL_VERBS = {
     "schedule": "定时任务",
     "watch": "文件监控",
     "websocket": "WebSocket",
+    "remember": "语义记忆",
 }
 
 
@@ -264,6 +266,15 @@ class Agent:
         except Exception:
             pass
 
+        # Load semantic memory context
+        try:
+            from .memory_v2 import build_semantic_context
+            sc = build_semantic_context()
+            if sc:
+                self.system_prompt = self.system_prompt + "\n\n" + sc
+        except Exception:
+            pass
+
     def run_iteration(self, user_input: str, handler: StreamHandler | None = None) -> None:
         handler = handler or ConsoleHandler()
         self._last_user_msg = user_input
@@ -425,6 +436,14 @@ class Agent:
                             self._pending_todos.append(f"[TODO]连续失败{self._fail_streak}次,换方案。")
                     else:
                         self._fail_streak = 0; self._same_error_count = 0; self._last_error_type = ""
+
+                # Auto-store to semantic memory
+                try:
+                    from .memory_v2 import auto_store_tool_result
+                    for tr in tool_results:
+                        auto_store_tool_result(tr.get("_tool_name", ""), {}, tr.get("content", ""))
+                except Exception:
+                    pass
 
                 provider_results = self.provider.make_tool_result_messages(tool_results)
                 self.messages.extend(provider_results)

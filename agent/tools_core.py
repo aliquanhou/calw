@@ -46,6 +46,7 @@ TOOL_DEFINITIONS=[
     {"name":"schedule","description":"定时任务管理：list/add/remove/events。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","add","remove","events"]},"name":{"type":"string"},"cron":{"type":"string"},"command":{"type":"string"},"task_id":{"type":"string"}},"required":["action"]}},
     {"name":"watch","description":"文件/进程监控：list/add/remove/events。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","add","remove","events"]},"name":{"type":"string"},"kind":{"type":"string","enum":["file","directory","log","process"]},"path":{"type":"string"},"pattern":{"type":"string"},"watch_id":{"type":"string"}},"required":["action"]}},
     {"name":"websocket","description":"WebSocket 客户端：connect/send/ping。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["connect","send","ping"]},"url":{"type":"string"},"message":{"type":"string"},"timeout":{"type":"integer"}},"required":["action"]}},
+    {"name":"remember","description":"语义记忆：search/search/stats/store/context。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["search","store","stats","context"]},"query":{"type":"string"},"content":{"type":"string"},"mem_type":{"type":"string"},"n_results":{"type":"integer"}},"required":["action"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text
