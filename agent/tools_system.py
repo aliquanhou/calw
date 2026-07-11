@@ -251,3 +251,132 @@ def _handle_process_v2(action: str = "list", name: str = "", pid: int = 0, sort_
         return f"📋 进程列表 (Top 30):\n{output}"
 
     return f"未知操作: {action} (可用: list/top/tree/wait_exit/launch/kill)"
+
+
+# ═══════════════════════════════════════════
+# GUI 自动化 (pyautogui)
+# ═══════════════════════════════════════════
+
+def _handle_gui(action: str = "info", x: int = 0, y: int = 0,
+                 text: str = "", button: str = "left",
+                 key: str = "", query: str = "") -> str:
+    """GUI 自动化：鼠标/键盘/屏幕/窗口控制。"""
+    try:
+        import pyautogui as pag
+        pag.FAILSAFE = True
+        pag.PAUSE = 0.3
+    except ImportError:
+        return "需安装 pyautogui: pip install pyautogui"
+
+    try:
+        if action == "info":
+            w, h = pag.size()
+            xm, ym = pag.position()
+            return f"🖥 屏幕: {w}x{h}\n🖱 鼠标: ({xm}, {ym})"
+
+        elif action == "click":
+            if x or y:
+                pag.click(x, y, button=button)
+            else:
+                pag.click(button=button)
+            return f"🖱 点击: ({x}, {y}) {button}"
+
+        elif action == "double_click":
+            if x or y:
+                pag.doubleClick(x, y)
+            else:
+                pag.doubleClick()
+            return f"🖱 双击: ({x}, {y})"
+
+        elif action == "right_click":
+            if x or y:
+                pag.rightClick(x, y)
+            else:
+                pag.rightClick()
+            return f"🖱 右键: ({x}, {y})"
+
+        elif action == "move":
+            dur = 0.5
+            pag.moveTo(x, y, duration=dur)
+            return f"🖱 移动到: ({x}, {y})"
+
+        elif action == "drag":
+            if not text:
+                return "需指定目标坐标 (text='x,y')"
+            parts = text.split(",")
+            if len(parts) == 2:
+                dx, dy = int(parts[0]), int(parts[1])
+                pag.drag(dx, dy, duration=0.5)
+                return f"🖱 拖动: ({dx}, {dy})"
+            return "格式: text='dx,dy'"
+
+        elif action == "type":
+            pag.write(text, interval=0.05)
+            display = text[:50] + ("..." if len(text) > 50 else "")
+            return f"⌨ 输入: {display}"
+
+        elif action == "keypress":
+            if not key:
+                return "需指定 key (如 enter, esc, tab, ctrl+c)"
+            pag.hotkey(*key.split("+")) if "+" in key else pag.press(key)
+            return f"⌨ 按键: {key}"
+
+        elif action == "scroll":
+            pag.scroll(-y if y else -3)  # 负=向下
+            return f"📜 滚动: {y or 3} 单位"
+
+        elif action == "screenshot":
+            import base64
+            region = None
+            if text:
+                parts = text.split(",")
+                if len(parts) == 4:
+                    region = tuple(int(p) for p in parts)
+            img = pag.screenshot(region=region)
+            b64 = base64.b64encode(img.tobytes()).decode("utf-8")
+            return f"[GUI_SCREENSHOT {img.width}x{img.height} base64={len(b64)}]"
+
+        elif action == "locate":
+            if not query:
+                return "需指定要查找的图像路径 (query)"
+            try:
+                pos = pag.locateOnScreen(query, confidence=0.8)
+                if pos:
+                    cx, cy = pag.center(pos)
+                    return f"🔍 找到 '{query}' 在 ({int(cx)}, {int(cy)}) 区域 {pos}"
+                return f"🔍 未找到 '{query}'"
+            except pag.ImageNotFoundException:
+                return f"🔍 未找到 '{query}'"
+            except Exception as e:
+                return f"查找失败:{e}"
+
+        elif action == "get_window":
+            # 获取活动窗口信息
+            results = []
+            try:
+                import pygetwindow as gw
+                active = gw.getActiveWindow()
+                if active:
+                    results.append(f"活动窗口: {active.title}")
+                for w in gw.getAllWindows()[:10]:
+                    if w.visible:
+                        results.append(f"  {w.title} ({w.width}x{w.height} @{w.left},{w.top})")
+            except ImportError:
+                # Fallback to PowerShell
+                r = _run_ps(
+                    "Add-Type @'\\n[System.Runtime.InteropServices.DllImport(\\\"user32.dll\\\")]\\n"
+                    "public static extern IntPtr GetForegroundWindow();\\n"
+                    "public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);\\n"
+                    "'@ | Out-Null; "
+                    "$hwnd = [Win32]::GetForegroundWindow(); "
+                    "$sb = New-Object System.Text.StringBuilder 256; "
+                    "[Win32]::GetWindowText($hwnd, $sb, 256) | Out-Null; "
+                    "echo \"活动窗口: $($sb.ToString())\""
+                )
+                return f"🪟 窗口信息:\n{r}"
+            return "\n".join(results) if results else "未获取到窗口信息"
+
+        return f"未知操作: {action} (可用: info/click/double_click/right_click/move/drag/type/keypress/scroll/screenshot/locate/get_window)"
+
+    except Exception as e:
+        return f"GUI 操作错误: {e}"
