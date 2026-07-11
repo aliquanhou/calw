@@ -380,3 +380,119 @@ def _handle_gui(action: str = "info", x: int = 0, y: int = 0,
 
     except Exception as e:
         return f"GUI 操作错误: {e}"
+
+
+# ═══════════════════════════════════════════
+# 系统监控
+# ═══════════════════════════════════════════
+
+def _handle_monitor(action: str = "resources", resource: str = "",
+                     threshold: float = 0, path: str = "",
+                     name: str = "", interval: int = 1) -> str:
+    """系统监控：资源使用/文件变化/进程事件。"""
+    try:
+        if action == "resources":
+            output = _run_ps(
+                "Get-CimInstance Win32_Processor | "
+                "Select-Object @{N='CPU%';E={$_.LoadPercentage}}; "
+                "$os = Get-CimInstance Win32_OperatingSystem; "
+                "$total = [math]::Round($os.TotalVisibleMemorySize/1MB,1); "
+                "$free = [math]::Round($os.FreePhysicalMemory/1MB,1); "
+                "$used = $total - $free; "
+                "Write-Output \"内存: ${used}GB / ${total}GB ($([math]::Round($used/$total*100,1))%)\"; "
+                "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | "
+                "Select-Object DeviceID, @{N='Free%';E={[math]::Round($_.FreeSpace/$_.Size*100,1)}}"
+            )
+            return f"📊 系统资源:\n{output}"
+
+        elif action == "cpu":
+            # CPU 使用率单次采样
+            output = _run_ps(
+                "Get-CimInstance Win32_Processor | "
+                "Select-Object @{N='CPU%';E={$_.LoadPercentage}}, Name"
+            )
+            return f"💻 CPU 使用率:\n{output}"
+
+        elif action == "memory":
+            output = _run_ps(
+                "$os = Get-CimInstance Win32_OperatingSystem; "
+                "$total = [math]::Round($os.TotalVisibleMemorySize/1MB,1); "
+                "$free = [math]::Round($os.FreePhysicalMemory/1MB,1); "
+                "$used = $total - $free; "
+                "Write-Output \"总内存: ${total}GB\"; "
+                "Write-Output \"已用: ${used}GB\"; "
+                "Write-Output \"可用: ${free}GB\"; "
+                "Write-Output \"使用率: $([math]::Round($used/$total*100,1))%\""
+            )
+            return f"🧠 内存使用:\n{output}"
+
+        elif action == "disk":
+            output = _run_ps(
+                "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | "
+                "Select-Object DeviceID, @{N='Size(GB)';E={[math]::Round($_.Size/1GB,1)}}, "
+                "@{N='Free(GB)';E={[math]::Round($_.FreeSpace/1GB,1)}}, "
+                "@{N='Free%';E={[math]::Round($_.FreeSpace/$_.Size*100,1)}} "
+                "| Format-Table -AutoSize"
+            )
+            return f"💾 磁盘:\n{output}"
+
+        elif action == "process_count":
+            output = _run_ps(
+                "$p = Get-Process; "
+                "Write-Output \"进程总数: $($p.Count)\"; "
+                "Write-Output \"\"分类:\"; "
+                "$p | Group-Object ProcessName | Sort-Object Count -Descending | "
+                "Select-Object -First 15 Name, Count | Format-Table -AutoSize"
+            )
+            return f"📋 进程统计:\n{output}"
+
+        elif action == "watch_file":
+            if not path:
+                return "需指定监控的文件或目录路径"
+            # 单次检查文件变更（使用 PowerShell 的 FileSystemWatcher 监听 5 秒）
+            output = _run_ps(
+                f"$watcher = New-Object System.IO.FileSystemWatcher; "
+                f"$watcher.Path = '{path.replace(chr(39), chr(39)*2)}'; "
+                f"$watcher.IncludeSubdirectories = $true; "
+                f"$watcher.EnableRaisingEvents = $true; "
+                f"$result = $watcher.WaitForChanged('All', 5000); "
+                f"if ($result.TimedOut) {{ echo '(5s内无变更)' }} "
+                f"else {{ echo \"变更: $($result.ChangeType) $($result.Name)\" }}"
+            )
+            return f"👁 文件监控: {path}\n{output}"
+
+        elif action == "network":
+            output = _run_ps(
+                "Get-CimInstance Win32_NetworkAdapter | "
+                "Where-Object {$_.NetEnabled} | "
+                "Select-Object Name, MACAddress, Speed, "
+                "@{N='IP';E={(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "
+                "\"Index=$($_.Index)\").IPAddress -join ','}} "
+                "| Format-Table -AutoSize"
+            )
+            return f"🌐 网络:\n{output}"
+
+        elif action == "uptime":
+            output = _run_ps(
+                "$os = Get-CimInstance Win32_OperatingSystem; "
+                "$boot = $os.LastBootUpTime; "
+                "$uptime = (Get-Date) - $boot; "
+                "Write-Output \"系统启动: $boot\"; "
+                "Write-Output \"运行时间: $($uptime.Days)天 $($uptime.Hours)小时 $($uptime.Minutes)分钟\""
+            )
+            return f"⏱ 系统运行时间:\n{output}"
+
+        elif action == "process_events":
+            # 监控新进程启动（最近创建/终止的进程）
+            output = _run_ps(
+                "Get-Process | Sort-Object StartTime -Descending | "
+                "Select-Object -First 15 Id, ProcessName, "
+                "@{N='Start';E={$_.StartTime.ToString('HH:mm:ss')}} "
+                "| Format-Table -AutoSize"
+            )
+            return f"🆕 最近进程:\n{output}"
+
+        return f"未知操作: {action} (可用: resources/cpu/memory/disk/process_count/watch_file/network/uptime/process_events)"
+
+    except Exception as e:
+        return f"监控错误: {e}"

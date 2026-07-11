@@ -57,6 +57,7 @@ _TOOL_ICONS = {
     "mkdir": "\U0001f4c1",
     "download": "\U0001f4e5",
     "gui": "\U0001f5b5",
+    "monitor": "\U0001f4ca",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -78,6 +79,7 @@ _TOOL_VERBS = {
     "mkdir": "创建目录",
     "download": "下载文件",
     "gui": "GUI自动化",
+    "monitor": "系统监控",
 }
 
 

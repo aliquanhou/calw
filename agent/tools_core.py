@@ -45,6 +45,7 @@ TOOL_DEFINITIONS=[
     {"name":"mkdir","description":"创建目录（parents=true 创建父目录）。","input_schema":{"type":"object","properties":{"path":{"type":"string"},"parents":{"type":"boolean"}},"required":["path"]}},
     {"name":"download","description":"从URL下载文件。","input_schema":{"type":"object","properties":{"url":{"type":"string"},"destination":{"type":"string"}},"required":["url","destination"]}},
     {"name":"gui","description":"GUI 自动化：鼠标点击/键盘输入/截图/窗口控制。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["info","click","double_click","right_click","move","drag","type","keypress","scroll","screenshot","locate","get_window"]},"x":{"type":"integer"},"y":{"type":"integer"},"text":{"type":"string"},"button":{"type":"string"},"key":{"type":"string"},"query":{"type":"string"}},"required":["action"]}},
+    {"name":"monitor","description":"系统监控：resources/cpu/memory/disk/process_count/watch_file/network/uptime。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["resources","cpu","memory","disk","process_count","watch_file","network","uptime","process_events"]},"path":{"type":"string"},"interval":{"type":"integer"}},"required":["action"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text

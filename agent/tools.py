@@ -11,7 +11,7 @@ from .tools_plan import (_handle_background,_handle_plan,_handle_task,_handle_pr
 from .tools_analysis import (_handle_ast,_handle_dep_graph,_handle_call_chain,_handle_trace_error,_find_cycles)
 from .tools_test import _handle_test
 from .tools_deps import _handle_deps
-from .tools_system import _handle_service, _handle_registry, _handle_process_v2, _handle_gui
+from .tools_system import _handle_service, _handle_registry, _handle_process_v2, _handle_gui, _handle_monitor
 
 BUILTIN_HANDLERS.update({
     "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
@@ -35,6 +35,7 @@ BUILTIN_HANDLERS.update({
     "mkdir":_handle_mkdir,
     "download":_handle_download,
     "gui":_handle_gui,
+    "monitor":_handle_monitor,
 })
 
 def handle_tool_call(name,params,output_callback=None):
