@@ -48,6 +48,7 @@ _TOOL_ICONS = {
     "revert": "⏪", "system_info": "\U0001f5a5", "process": "⚙️",
     "background": "⏳", "trace_error": "\U0001f41b",
     "test": "\U0001f9ea",
+    "dep": "\U0001f4e6",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -60,6 +61,7 @@ _TOOL_VERBS = {
     "revert": "撤销更改", "system_info": "系统信息", "process": "进程管理",
     "background": "后台任务", "trace_error": "错误追踪",
     "test": "测试驱动",
+    "dep": "依赖管理",
 }
 
 
@@ -370,6 +372,16 @@ class Agent:
                     content = tr.get("content") or ""
                     from .tools import classify_tool_result
                     a = classify_tool_result(tr.get("_tool_name", ""), content)
+                    # 自动安装缺失依赖
+                    if a["error_type"] == "import_error":
+                        try:
+                            from .tools_deps import extract_missing_modules, install_package
+                            missing = extract_missing_modules(content)
+                            for mod in missing[:2]:
+                                result = install_package(mod)
+                                content += f"\n[自动安装] {result}"
+                        except Exception:
+                            pass
                     tool_succeeded = a["success"]
                     self._turn_executed_tools.append((tr.get("_tool_name", ""), tool_succeeded))
                     if not tool_succeeded:
