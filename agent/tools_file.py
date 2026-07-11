@@ -1,6 +1,6 @@
 """tools_file"""
 from __future__ import annotations
-import glob,hashlib,json,os,re,subprocess,sys
+import difflib,glob,hashlib,json,os,re,subprocess,sys
 from.tools_core import _file_backups,_written_this_session,_consecutive_fails,_session_lessons,_TOOL_RESULT_MAX_LENGTH,smart_truncate
 def _cr(f,m=10):
     b=os.path.basename(f);n=os.path.splitext(b)[0]
@@ -109,26 +109,135 @@ def _handle_edit(file_path,old_string,new_string):
         return r
     except Exception as e:return f"写入出错:{e}"
 
-def _handle_replace(file_path,search,replace_text,partial=False):
-    fp=os.path.normpath(os.path.abspath(file_path))
-    if os.name=="nt"and len(fp)>=2 and fp[1]==":":fp=fp[0].upper()+fp[1:]
-    if not os.path.exists(fp):return f"错误:文件不存在:{fp}"
-    try:content=open(fp,"r",encoding="utf-8").read()
-    except Exception as e:return f"读取出错:{e}"
-    if not partial and content.count(search)==1:return _handle_edit(file_path,search,replace_text)
-    search_lines=[l.strip()for l in search.split('\n')if l.strip()]
-    content_lines=content.split('\n')
-    best_idx=-1;best_score=0
-    for i in range(len(content_lines)-len(search_lines)+1):
-        score=sum(1 for j,s in enumerate(search_lines)if s in content_lines[i+j]or content_lines[i+j].strip()==s)
-        if score>best_score:best_score=score;best_idx=i
-    if best_idx<0 or best_score<len(search_lines)*0.5:return f"错误:无法定位匹配内容(最佳{best_score}/{len(search_lines)})"
-    _file_backups[fp]=content
-    new_lines=content_lines[:best_idx]+[replace_text]+content_lines[best_idx+len(search_lines):]
+# ── SEARCH/REPLACE 引擎 ──────────────────────────────────────
+# 多策略智能替换：精确匹配 → 锚点匹配 → 模糊行匹配 → 行号引用
+# 成功后输出 diff，自动回滚+重试
+
+def _handle_replace(file_path, search, replace_text, partial=False):
+    """SEARCH/REPLACE: 多策略智能替换引擎。"""
+    fp = os.path.normpath(os.path.abspath(file_path))
+    if os.name == "nt" and len(fp) >= 2 and fp[1] == ":":
+        fp = fp[0].upper() + fp[1:]
+    if not os.path.exists(fp):
+        return f"错误:文件不存在:{fp}"
     try:
-        open(fp,"w",encoding="utf-8").write('\n'.join(new_lines))
-        return f"成功替换1处(模糊匹配,置信度{best_score}/{len(search_lines)})"
-    except Exception as e:return f"写入出错:{e}"
+        content = open(fp, "r", encoding="utf-8").read()
+    except Exception as e:
+        return f"读取出错:{e}"
+
+    search = search.rstrip("\n")
+    old_content = content
+    _file_backups[fp] = old_content
+
+    # no-op
+    if search == replace_text:
+        return "✅ 替换成功 [no-op: 内容相同，无需修改]"
+    if not search:
+        return "✅ 替换成功 [no-op: search 为空]"
+
+    # ── strategy 1: 精确匹配 ──
+    count = content.count(search)
+    if count == 1:
+        return _do_replace(fp, old_content, content.replace(search, replace_text, 1),
+                           search, replace_text, "精确匹配")
+
+    # ── strategy 2: 锚点匹配 ──
+    if count == 0:
+        search_lines = search.split("\n")
+        for anchor in search_lines:
+            anchor_s = anchor.strip()
+            if not anchor_s or len(anchor_s) < 8:
+                continue
+            ac = content.count(anchor_s)
+            if ac == 1:
+                cl = content.split("\n")
+                found_idx = -1
+                for i, line in enumerate(cl):
+                    if anchor_s in line or line.strip() == anchor_s:
+                        found_idx = i
+                        break
+                if found_idx >= 0:
+                    new_lines = cl[:found_idx] + [replace_text] + cl[found_idx + len(search_lines):]
+                    return _do_replace(fp, old_content, "\n".join(new_lines),
+                                       search, replace_text,
+                                       f"锚点匹配(行{found_idx+1}:{anchor_s[:40]})")
+
+    # ── strategy 3: 模糊行匹配 ──
+    search_lines_stripped = [s.strip() for s in search.split("\n") if s.strip()]
+    if len(search_lines_stripped) >= 1:
+        content_lines = old_content.split("\n")
+        best_idx = -1
+        best_score = 0
+        for i in range(len(content_lines) - len(search_lines_stripped) + 1):
+            score = sum(
+                1 for j, s in enumerate(search_lines_stripped)
+                if s in content_lines[i + j] or content_lines[i + j].strip() == s
+            )
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        threshold = max(1, len(search_lines_stripped) * 0.6)
+        if best_idx >= 0 and best_score >= threshold:
+            new_lines = content_lines[:best_idx] + [replace_text] + content_lines[best_idx + len(search_lines_stripped):]
+            return _do_replace(fp, old_content, "\n".join(new_lines),
+                               search, replace_text,
+                               f"模糊匹配(置信度{best_score}/{len(search_lines_stripped)},行{best_idx+1})")
+
+    # ── strategy 4: 行号引用 ──
+    if search.startswith(":") and search[1:].strip().isdigit():
+        line_no = int(search[1:].strip())
+        content_lines = old_content.split("\n")
+        if 1 <= line_no <= len(content_lines):
+            old_line = content_lines[line_no - 1]
+            new_lines = content_lines[:line_no - 1] + [replace_text] + content_lines[line_no:]
+            return _do_replace(fp, old_content, "\n".join(new_lines),
+                               old_line, replace_text,
+                               f"行号替换(L{line_no})")
+
+    # ── all strategies failed ──
+    hint = ""
+    if len(search) > 50:
+        hint = f"  search前50字符:{search[:50]}"
+    return f"错误:无法定位匹配内容 (精确匹配出现{count}次){hint}"
+
+
+def _do_replace(file_path: str, old_content: str, new_content: str,
+                search: str, replace_text: str, strategy: str) -> str:
+    """执行替换写入，生成 diff，语法验证，返回结果。"""
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+    except Exception as e:
+        return f"写入出错:{e}"
+
+    # 生成 diff
+    old_lines = old_content.split("\n")
+    new_lines_res = new_content.split("\n")
+    diff_lines = list(difflib.unified_diff(
+        old_lines, new_lines_res,
+        fromfile=file_path, tofile=file_path,
+        lineterm="",
+        n=2,
+    ))
+    diff_output = "\n".join(diff_lines[:30])
+    if len(diff_lines) > 30:
+        diff_output += f"\n... (diff 共 {len(diff_lines)} 行)"
+
+    # 语法验证
+    he, ws = _rv(file_path)
+    warnings = ""
+    if he:
+        _restore_backup(file_path)
+        return f"验证失败:语法错误,已回滚\n{he}\n策略:{strategy}"
+    if ws:
+        warnings = "\n" + ws
+
+    # 引用检查
+    refs = _cr(file_path)
+    if refs:
+        warnings += f"\n{len(refs)}个文件可能引用:" + "".join(f"\n  {r}" for r in refs[:6])
+
+    return f"✅ 替换成功 [{strategy}]\n{diff_output}{warnings}"
 
 def _handle_glob(pattern,path=None):
     root=os.path.abspath(path)if path else os.getcwd()
