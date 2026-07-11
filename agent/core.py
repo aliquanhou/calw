@@ -49,6 +49,8 @@ _TOOL_ICONS = {
     "background": "⏳", "trace_error": "\U0001f41b",
     "test": "\U0001f9ea",
     "dep": "\U0001f4e6",
+    "service": "⚙️",
+    "registry": "\U0001f4c1",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -62,6 +64,8 @@ _TOOL_VERBS = {
     "background": "后台任务", "trace_error": "错误追踪",
     "test": "测试驱动",
     "dep": "依赖管理",
+    "service": "服务控制",
+    "registry": "注册表",
 }
 
 

@@ -20,7 +20,7 @@ TOOL_DEFINITIONS=[
     {"name":"think","description":"推理。","input_schema":{"type":"object","properties":{"thought":{"type":"string"},"content":{"type":"string"},"title":{"type":"string"}},"anyOf":[{"required":["thought"]},{"required":["content"]}]}},
     {"name":"project_memory","description":"项目记忆。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["read","write","append"]},"content":{"type":"string"}},"required":["action"]}},
     {"name":"system_info","description":"系统信息。","input_schema":{"type":"object","properties":{"category":{"type":"string","enum":["os","cpu","memory","disk","network","software","environment","all"]}}}},
-    {"name":"process","description":"进程管理。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","kill","search"]},"name":{"type":"string"},"pid":{"type":"integer"}},"required":["action"]}},
+    {"name":"process","description":"进程深度管理：list/top/tree/wait_exit/launch/kill。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","top","tree","tree_full","wait_exit","launch","kill","search"]},"name":{"type":"string"},"pid":{"type":"integer"},"sort_by":{"type":"string","enum":["cpu","mem","id"]}},"required":["action"]}},
     {"name":"web","description":"HTTP请求。","input_schema":{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string","enum":["GET","POST"]},"data":{"type":"string"},"headers":{"type":"string"}},"required":["url"]}},
     {"name":"screencap","description":"截图。","input_schema":{"type":"object","properties":{}}},
     {"name":"browser","description":"浏览器。","input_schema":{"type":"object","properties":{"action":{"type":"string"},"url":{"type":"string"},"selector":{"type":"string"},"text":{"type":"string"},"script":{"type":"string"}},"required":["action"]}},
@@ -37,6 +37,8 @@ TOOL_DEFINITIONS=[
     {"name":"replace","description":"SEARCH/REPLACE: 模糊搜索替换。","input_schema":{"type":"object","properties":{"file_path":{"type":"string"},"search":{"type":"string"},"replace_text":{"type":"string"},"partial":{"type":"boolean"}},"required":["file_path","search","replace_text"]}},
     {"name":"test","description":"测试驱动：发现/运行测试并解析结果。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["discover","run"]},"path":{"type":"string"},"test_name":{"type":"string"},"timeout":{"type":"integer"}},"required":["action"]}},
     {"name":"dep","description":"包依赖管理：自动检测缺失模块并安装。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["check","install","auto"]},"module_name":{"type":"string"},"text":{"type":"string"}},"required":["action"]}},
+    {"name":"service","description":"Windows服务控制：list/search/status/start/stop/restart/set_startup。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","search","status","start","stop","restart","set_startup"]},"name":{"type":"string"},"start_type":{"type":"string"}},"required":["action"]}},
+    {"name":"registry","description":"注册表操作：read/write/delete/list_keys。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["read","write","delete","list_keys"]},"key":{"type":"string"},"name":{"type":"string"},"value":{"type":"string"}},"required":["action","key"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text
