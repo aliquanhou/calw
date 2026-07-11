@@ -39,6 +39,11 @@ TOOL_DEFINITIONS=[
     {"name":"dep","description":"包依赖管理：自动检测缺失模块并安装。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["check","install","auto"]},"module_name":{"type":"string"},"text":{"type":"string"}},"required":["action"]}},
     {"name":"service","description":"Windows服务控制：list/search/status/start/stop/restart/set_startup。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["list","search","status","start","stop","restart","set_startup"]},"name":{"type":"string"},"start_type":{"type":"string"}},"required":["action"]}},
     {"name":"registry","description":"注册表操作：read/write/delete/list_keys。","input_schema":{"type":"object","properties":{"action":{"type":"string","enum":["read","write","delete","list_keys"]},"key":{"type":"string"},"name":{"type":"string"},"value":{"type":"string"}},"required":["action","key"]}},
+    {"name":"move","description":"移动/重命名文件或目录。","input_schema":{"type":"object","properties":{"source":{"type":"string"},"destination":{"type":"string"}},"required":["source","destination"]}},
+    {"name":"copy","description":"复制文件或目录（recursive=true 复制目录）。","input_schema":{"type":"object","properties":{"source":{"type":"string"},"destination":{"type":"string"},"recursive":{"type":"boolean"}},"required":["source","destination"]}},
+    {"name":"delete","description":"删除文件或目录（recursive=true 递归删除）。","input_schema":{"type":"object","properties":{"path":{"type":"string"},"recursive":{"type":"boolean"}},"required":["path"]}},
+    {"name":"mkdir","description":"创建目录（parents=true 创建父目录）。","input_schema":{"type":"object","properties":{"path":{"type":"string"},"parents":{"type":"boolean"}},"required":["path"]}},
+    {"name":"download","description":"从URL下载文件。","input_schema":{"type":"object","properties":{"url":{"type":"string"},"destination":{"type":"string"}},"required":["url","destination"]}},
 ]
 def smart_truncate(text,max_len=_TOOL_RESULT_MAX_LENGTH):
     if not text or len(text)<=max_len:return text

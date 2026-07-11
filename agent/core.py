@@ -51,6 +51,11 @@ _TOOL_ICONS = {
     "dep": "\U0001f4e6",
     "service": "⚙️",
     "registry": "\U0001f4c1",
+    "move": "\U0001f4c2",
+    "copy": "\U0001f4cb",
+    "delete": "\U0001f5d1",
+    "mkdir": "\U0001f4c1",
+    "download": "\U0001f4e5",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -66,6 +71,11 @@ _TOOL_VERBS = {
     "dep": "依赖管理",
     "service": "服务控制",
     "registry": "注册表",
+    "move": "移动文件",
+    "copy": "复制文件",
+    "delete": "删除文件",
+    "mkdir": "创建目录",
+    "download": "下载文件",
 }
 
 

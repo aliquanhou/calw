@@ -3,7 +3,7 @@ from __future__ import annotations
 import os,time
 from typing import Any
 from .tools_core import (TOOL_DEFINITIONS,BUILTIN_HANDLERS,PLUGIN_HANDLERS,_written_this_session,_agent_spawned_pids,_file_backups,_session_lessons,_consecutive_fails,_last_heal_time,_NODE_MODULES_WARNED,smart_truncate,check_search_scope,classify_tool_result,guard_tool_call,_load_plugins,_TOOL_RESULT_MAX_LENGTH)
-from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_replace,_handle_glob,_handle_grep,_handle_revert,_check_references,_run_validation,_restore_backup)
+from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_replace,_handle_glob,_handle_grep,_handle_revert,_handle_move,_handle_copy,_handle_delete,_handle_mkdir,_handle_download,_check_references,_run_validation,_restore_backup)
 from .tools_shell import (_handle_bash,_handle_system_info,_handle_process,_handle_think,_run_powershell,BuildRunner,_self_heal)
 from .tools_web import (_handle_web,_handle_web_search,_handle_screencap,_handle_ask_user)
 from .tools_browser import (_handle_browser,_browser,_browser_context,_browser_page,_browser_console_logs,_browser_network_errors,_browser_page_errors)
@@ -29,6 +29,11 @@ BUILTIN_HANDLERS.update({
     "service":_handle_service,
     "registry":_handle_registry,
     "process":_handle_process_v2,
+    "move":_handle_move,
+    "copy":_handle_copy,
+    "delete":_handle_delete,
+    "mkdir":_handle_mkdir,
+    "download":_handle_download,
 })
 
 def handle_tool_call(name,params,output_callback=None):

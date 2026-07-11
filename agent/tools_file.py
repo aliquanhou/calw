@@ -342,3 +342,86 @@ def _handle_revert(file_path=""):
         return"\n".join([f"可恢复({len(_file_backups)}个):"]+[f"  {k}[{'有备份'if v else'新文件'}]"for k,v in sorted(_file_backups.items())])
     ap=os.path.abspath(file_path)
     return _rb(ap)if ap in _file_backups else"错误:无备份。"
+
+# ── 文件系统全操作 ────────────────────────────────────
+
+def _handle_move(source, destination):
+    """移动/重命名文件或目录。"""
+    src = os.path.abspath(source)
+    dst = os.path.abspath(destination)
+    if not os.path.exists(src):
+        return f"错误:源不存在:{src}"
+    try:
+        _file_backups[src] = open(src, "r", encoding="utf-8").read() if os.path.isfile(src) else None
+    except: pass
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.rename(src, dst)
+        return f"✅ 移动成功: {src} → {dst}"
+    except Exception as e:
+        return f"错误:移动失败:{e}"
+
+def _handle_copy(source, destination, recursive=False):
+    """复制文件或目录。"""
+    import shutil
+    src = os.path.abspath(source); dst = os.path.abspath(destination)
+    if not os.path.exists(src):
+        return f"错误:源不存在:{src}"
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isdir(src):
+            if not recursive:
+                return f"错误:是目录,需 recursive=true"
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+        return f"✅ 复制成功: {src} → {dst}"
+    except Exception as e:
+        return f"错误:复制失败:{e}"
+
+def _handle_delete(path, recursive=False):
+    """删除文件或空目录。"""
+    target = os.path.abspath(path)
+    if not os.path.exists(target):
+        return f"错误:不存在:{target}"
+    try:
+        if os.path.isdir(target):
+            if not recursive:
+                os.rmdir(target)
+            else:
+                import shutil; shutil.rmtree(target)
+        else:
+            os.remove(target)
+        return f"✅ 已删除: {target}"
+    except OSError as e:
+        if "directory not empty" in str(e).lower():
+            return f"错误:目录非空,需 recursive=true"
+        return f"错误:删除失败:{e}"
+    except Exception as e:
+        return f"错误:删除失败:{e}"
+
+def _handle_mkdir(path, parents=False):
+    """创建目录。"""
+    target = os.path.abspath(path)
+    try:
+        if parents:
+            os.makedirs(target, exist_ok=True)
+        else:
+            os.mkdir(target)
+        return f"✅ 已创建目录: {target}"
+    except FileExistsError:
+        return f"目录已存在:{target}"
+    except Exception as e:
+        return f"错误:创建失败:{e}"
+
+def _handle_download(url, destination):
+    """从 URL 下载文件。"""
+    import urllib.request
+    dst = os.path.abspath(destination)
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        urllib.request.urlretrieve(url, dst)
+        size = os.path.getsize(dst) if os.path.exists(dst) else 0
+        return f"✅ 下载成功: {url} → {dst} ({size} 字节)"
+    except Exception as e:
+        return f"错误:下载失败:{e}"
