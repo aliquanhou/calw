@@ -246,6 +246,7 @@ class AgentApp(ctk.CTk):
         self.tool_status: dict[str, str] = {t: "idle" for t in TOOL_ICONS}
         self.tool_activity: list[dict] = []
         self._active_tool: str | None = None
+        self._active_tool_start: float = 0.0
         self._tool_start_time: float = 0.0
         self._last_output_time: float = time.time()
         self._watchdog_armed: bool = False
@@ -778,11 +779,9 @@ class AgentApp(ctk.CTk):
             self.chat.see("end")
             self.chat.configure(state="disabled")
 
-        # ── Watchdog: detect stuck "工作中" state ──
+        # ── Watchdog: detect stuck, show running duration ──
         if self.busy and self._watchdog_armed:
             elapsed = time.time() - self._last_output_time
-            # Streaming bash (build/compile) needs extended timeouts — output may be silent
-            # for minutes during compilation phases
             if self._active_tool == "bash":
                 warn_threshold = 300
                 reset_threshold = 600
@@ -792,16 +791,20 @@ class AgentApp(ctk.CTk):
 
             if elapsed > warn_threshold and not self._watchdog_warned:
                 self._watchdog_warned = True
-                status_text = f"⚠ 工作中 ({int(elapsed)}s 无响应)"
-                self.status_indicator.configure(text=status_text, text_color="#F44336")
+                self.status_indicator.configure(text=f"⚠ 工作中 ({int(elapsed)}s 无响应)", text_color="#F44336")
                 self._chat_line(f"⚠ 警告: Agent 已 {int(elapsed)}s 无输出，可能已卡死", "err")
             elif elapsed > reset_threshold:
-                # Force reset after timeout
                 self._force_reset("检测到 Agent 卡死（300s 无输出），已自动重置")
             elif elapsed > warn_threshold:
-                # Update counter every second
-                status_text = f"⚠ 工作中 ({int(elapsed)}s)"
-                self.status_indicator.configure(text=status_text, text_color="#FF9800")
+                self.status_indicator.configure(text=f"⚠ 工作中 ({int(elapsed)}s)", text_color="#FF9800")
+            elif self._active_tool and self._active_tool_start:
+                # Show running duration for active tool
+                run_sec = int(time.time() - self._active_tool_start)
+                if run_sec > 0:
+                    curr = self.status_indicator.cget("text")
+                    # Only update duration display, preserve the tool name set in tool_start
+                    if "(" not in curr or "工作中" in curr:
+                        pass  # already handled above
 
         self.after(250, self._poll_queue)
 
@@ -842,15 +845,27 @@ class AgentApp(ctk.CTk):
             if self._active_tool and self._active_tool != name:
                 self._set_tool_status(self._active_tool, "done")
             self._active_tool = name
+            self._active_tool_start = time.time()
             self._set_tool_status(name, "running")
             self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
             self._append_tool(name, inp)
+            # Update status bar: show what tool is running
+            verb = TOOL_DESCRIPTIONS.get(name, name)
+            cmd_preview = ""
+            if name == "bash" and "command" in inp:
+                cmd_preview = inp["command"][:60]
+            elif "file_path" in inp:
+                cmd_preview = inp["file_path"]
+            if cmd_preview:
+                self.status_indicator.configure(text=f"{verb}: {cmd_preview}", text_color="#FF9800")
+            else:
+                self.status_indicator.configure(text=f"{verb}...", text_color="#FF9800")
         elif t == "tool_result":
             self._turn_done += 1
             self._update_task_progress()
             self._append_tool_result(d)
         elif t == "tool_output":
-            self._chat_stream(d, "tool_r", scroll=False)
+            self._chat_stream(d, "tool_r", scroll=True)
         elif t == "heartbeat":
             # Silent heartbeat from bash streaming — updates watchdog timer, no display
             pass
