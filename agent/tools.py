@@ -12,6 +12,7 @@ from .tools_analysis import (_handle_ast,_handle_dep_graph,_handle_call_chain,_h
 from .tools_test import _handle_test
 from .tools_deps import _handle_deps
 from .tools_system import _handle_service, _handle_registry, _handle_process_v2, _handle_gui, _handle_monitor
+from .tools_extra import _handle_schedule, _handle_watch, _handle_websocket
 
 BUILTIN_HANDLERS.update({
     "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
@@ -36,6 +37,9 @@ BUILTIN_HANDLERS.update({
     "download":_handle_download,
     "gui":_handle_gui,
     "monitor":_handle_monitor,
+    "schedule":_handle_schedule,
+    "watch":_handle_watch,
+    "websocket":_handle_websocket,
 })
 
 def handle_tool_call(name,params,output_callback=None):

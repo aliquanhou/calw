@@ -58,6 +58,9 @@ _TOOL_ICONS = {
     "download": "\U0001f4e5",
     "gui": "\U0001f5b5",
     "monitor": "\U0001f4ca",
+    "schedule": "⏰",
+    "watch": "\U0001f441",
+    "websocket": "\U0001f517",
 }
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
@@ -80,6 +83,9 @@ _TOOL_VERBS = {
     "download": "下载文件",
     "gui": "GUI自动化",
     "monitor": "系统监控",
+    "schedule": "定时任务",
+    "watch": "文件监控",
+    "websocket": "WebSocket",
 }
 
 
