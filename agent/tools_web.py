@@ -31,14 +31,44 @@ def _handle_web_search(query,max_results=5):
             lines.append(f"  {u}");lines.append("")
         return"\n".join(lines).strip()if lines else f"无结果:{query}"
     except Exception as e:return f"搜索失败:{e}"
-def _handle_ask_user(question,options=""):
-    r=f"QUESTION:{question}"
+def _handle_ask_user(question, options="", analysis="", recommended=""):
+    """智能询问用户：带分析 + 多选项 + 推荐。"""
+    lines = []
+    lines.append("")
+    lines.append("=" * 50)
+    lines.append("🤔 需要你的决定")
+    lines.append("=" * 50)
+    lines.append("")
+    lines.append(f"📌 **{question}**")
+    lines.append("")
+    if analysis:
+        lines.append("📊 **分析**:")
+        for a_line in analysis.split("\\n"):
+            a_line = a_line.strip()
+            if a_line:
+                lines.append(f"   {a_line}")
+        lines.append("")
     if options:
         try:
-            o=json.loads(options)
-            if isinstance(o,list)and o:r+="\nOPTIONS:\n"+"\n".join(f"  [{i+1}]{v}"for i,v in enumerate(o))
-        except:pass
-    return r+"\n\n请等待用户回复。"
+            o = json.loads(options)
+            if isinstance(o, list) and o:
+                lines.append("🔀 **可选方案**:")
+                for i, v in enumerate(o):
+                    recommended_str = ""
+                    if recommended and (str(i) == str(recommended) or str(i + 1) == str(recommended) or v.startswith(str(recommended)) or recommended in v):
+                        recommended_str = " ⭐"
+                    letter = chr(65 + i)
+                    lines.append(f"  [{letter}]{v}{recommended_str}")
+                lines.append("")
+                if recommended:
+                    lines.append(f"💡 **推荐**: 选项 {recommended}")
+                    lines.append("")
+        except json.JSONDecodeError:
+            lines.append(f"  选项: {options}")
+            lines.append("")
+    lines.append("💬 请回复你的选择（输入 A/B/C... 或直接说）")
+    lines.append("=" * 50)
+    return "\n".join(lines)
 def _handle_screencap():
     r=_run_powershell('Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;try{$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds;$bm=New-Object System.Drawing.Bitmap $b.Width,$b.Height;$g=[System.Drawing.Graphics]::FromImage($bm);$g.CopyFromScreen($b.X,$b.Y,0,0,$b.Size);$ms=New-Object System.IO.MemoryStream;$bm.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png);[Convert]::ToBase64String($ms.ToArray())}catch{"SCREENSHOT_ERROR: $_"}')
     if r.startswith("SCREENSHOT_ERROR"):return f"截图失败:{r.replace('SCREENSHOT_ERROR: ','')}"
