@@ -210,6 +210,15 @@ class Agent:
         except Exception:
             pass  # memory not available, continue without
 
+        # Load project map
+        try:
+            from .project_map import ProjectMap
+            pm = ProjectMap().to_prompt_block()
+            if pm:
+                self.system_prompt = self.system_prompt + "\n\n" + pm
+        except Exception:
+            pass
+
     def run_iteration(self, user_input: str, handler: StreamHandler | None = None) -> None:
         """Process a single user input through the agent loop.
 
