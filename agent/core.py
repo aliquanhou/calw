@@ -40,12 +40,12 @@ def _call_with_timeout(func, timeout, *args, **kwargs):
 
 _TOOL_ICONS = {
     "read": "\U0001f4d6", "write": "✏️", "edit": "\U0001f4dd", "replace": "\U0001f50d",
-    "glob": "\U0001f50e", "grep": "\U0001f50d", "bash": "\U0001f4bb", "think": "\U0001f9e0",
+    "glob": "\U0001f50e", "grep": "\U0001f50d", "bash": "\U0001f4bb",
     "web": "\U0001f310", "web_search": "\U0001f50d", "ask_user": "\U0001f4ac",
-    "browser": "\U0001f30d", "screencap": "\U0001f4f8",
+    "browser": "\U0001f30d",
     "plan": "\U0001f4cb", "task": "✅", "project_memory": "\U0001f9e0",
     "ast": "\U0001f52c", "dep_graph": "\U0001f517", "call_chain": "\U0001f517",
-    "revert": "⏪", "system_info": "\U0001f5a5", "process": "⚙️",
+    "revert": "⏪", "process": "⚙️",
     "background": "⏳", "trace_error": "\U0001f41b",
     "test": "\U0001f9ea",
     "dep": "\U0001f4e6",
@@ -65,12 +65,12 @@ _TOOL_ICONS = {
 _TOOL_VERBS = {
     "read": "读取文件", "write": "写入文件", "edit": "编辑文件",
     "replace": "搜索替换", "glob": "搜索路径", "grep": "搜索内容",
-    "bash": "执行命令", "think": "推理思考", "ask_user": "询问用户",
+    "bash": "执行命令", "ask_user": "询问用户",
     "web": "HTTP 请求", "web_search": "网络搜索",
-    "screencap": "屏幕截图", "browser": "浏览器操作",
+    "browser": "浏览器操作",
     "plan": "任务计划", "task": "任务追踪", "project_memory": "项目记忆",
     "ast": "AST 分析", "dep_graph": "依赖分析", "call_chain": "调用链",
-    "revert": "撤销更改", "system_info": "系统信息", "process": "进程管理",
+    "revert": "撤销更改", "process": "进程管理",
     "background": "后台任务", "trace_error": "错误追踪",
     "test": "测试驱动",
     "dep": "依赖管理",
@@ -362,8 +362,9 @@ class Agent:
             if stash_report:
                 handler.on_text(f"\n{stash_report}\n")
 
-            _READONLY = {'read', 'glob', 'grep', 'think', 'web', 'web_search',
-                         'ast', 'dep_graph', 'call_chain', 'system_info', 'process'}
+            _READONLY = {'read', 'glob', 'grep', 'web', 'web_search',
+                         'ast', 'dep_graph', 'call_chain', 'process',
+                         'service', 'registry', 'monitor'}
             if tool_calls_for_history:
                 handler.on_turn_plan(len(tool_calls_for_history))
                 tool_results = []
