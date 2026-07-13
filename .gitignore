@@ -16,6 +16,7 @@ data/
 # 项目配置
 .claude/
 config.json
+.github/workflows/
 
 # 本地备份/对比文件（非仓库内容）
 agent/app_original.py
