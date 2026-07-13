@@ -30,10 +30,10 @@ from .retry import (
 from .router import classify_task, recommend_model, compare_models
 from .project_map import ProjectMap
 
-# 可选模块（需要时才导入）
-# from .researcher import deep_research, format_report
-# from .reviewer import review_diff, review_file, format_report
-# from .mcpserver import get_mcp
+# 移植模块（已适配 v2.1 架构）
+from .researcher import deep_research, format_report as research_format
+from .reviewer import review_diff, review_file, review_working_tree, format_report as review_format
+from .mcpserver import get_mcp
 
 
 def create_agent(user_id: str = "default", config: dict | None = None) -> Agent:

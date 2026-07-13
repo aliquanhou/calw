@@ -317,10 +317,16 @@ class AgentApp(ctk.CTk):
             ("asst", COLOR_ASSISTANT, (FONT_MONO, 13)),
             ("think", COLOR_THINKING, (FONT_MONO, 12)),
             ("tool", COLOR_TOOL_NAME, (FONT_MONO, 12, "bold")),
+            ("tool_path", "#64B5F6", (FONT_MONO, 12)),
             ("tool_r", COLOR_TOOL_RESULT, (FONT_MONO, 12)),
+            ("tool_meta", "#888", (FONT_MONO, 11)),
+            ("code", "#82AAFF", (FONT_MONO, 12)),
+            ("code_block", "#A8D8EA", (FONT_MONO, 12)),
             ("err", COLOR_ERROR, (FONT_MONO, 12, "bold")),
             ("sys", COLOR_SYSTEM, (FONT_FAMILY, 12)),
             ("sep", COLOR_SEPARATOR, (FONT_MONO, 8)),
+            ("dim", "#666", (FONT_MONO, 11)),
+            ("num", "#F78C6C", (FONT_MONO, 12)),
         ]:
             self.chat.tag_config(tag, foreground=color, font=font)
 
@@ -895,6 +901,9 @@ class AgentApp(ctk.CTk):
             self._turn_done += 1
             self._update_task_progress()
             self._append_tool_result(d)
+            # 补充进度显示
+            if self._turn_total > 1:
+                self._chat_line(f"    → 步骤 {self._turn_done}/{self._turn_total}", "dim")
         elif t == "tool_output":
             self._chat_stream(d, "tool_r", scroll=True)
         elif t == "heartbeat":
@@ -989,32 +998,115 @@ class AgentApp(ctk.CTk):
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
+    def _tool_label(self, name: str) -> str:
+        """Get icon + label for a tool name."""
+        icons = {
+            "read": "📖", "write": "✏️", "edit": "🔧", "replace": "🔍",
+            "glob": "🔎", "grep": "🔎", "bash": "💻", "web": "🌐",
+            "web_search": "🔍", "browser": "🌍", "process": "⚙️",
+            "service": "⚙️", "registry": "📋", "gui": "🖱️",
+            "plan": "📋", "task": "✅", "background": "⏳",
+            "remember": "🧠", "test": "🧪", "dep": "📦",
+            "ast": "🌳", "dep_graph": "🕸️", "call_chain": "🔗",
+            "monitor": "📊", "schedule": "⏰", "watch": "👁️",
+            "websocket": "🔌", "download": "📥", "move": "📂",
+            "copy": "📄", "delete": "🗑️", "mkdir": "📁",
+            "ask_user": "💬", "trace_error": "🐛",
+        }
+        return icons.get(name, "⚡")
+
+    def _tool_path_display(self, inp: dict) -> str:
+        """从工具参数中提取要显示的目标路径/命令。"""
+        if "file_path" in inp:
+            return inp["file_path"]
+        if "command" in inp:
+            cmd = inp["command"]
+            return cmd[:80] + ("..." if len(cmd) > 80 else "")
+        if "url" in inp:
+            return inp["url"]
+        if "pattern" in inp:
+            return inp["pattern"]
+        if "query" in inp:
+            return inp["query"]
+        if "path" in inp:
+            return inp["path"]
+        return ""
+
     def _append_tool(self, name: str, inp: dict):
+        """Claude Code 风格：工具名 + 目标（同一行），绿色箭头指示。"""
         self.chat.configure(state="normal")
-        icon = TOOL_ICONS.get(name, "⚡")
-        preview = json.dumps(inp, ensure_ascii=False)[:200]
-        self.chat.insert("end", f"  {icon} {name}\n", "tool")
-        if preview and preview != "{}":
-            self.chat.insert("end", f"     {preview}\n", "tool_r")
+        icon = self._tool_label(name)
+        path = self._tool_path_display(inp)
+
+        # 工具行：📖 read  main.py
+        line = f"  {icon} {name}"
+        self.chat.insert("end", line, "tool")
+        if path:
+            self.chat.insert("end", f"  {path}", "tool_path")
+
+        # 额外参数用小字灰色显示
+        extra = {k: v for k, v in inp.items()
+                 if k not in ("file_path", "command", "url", "pattern", "query", "path") and v}
+        if extra:
+            meta = "  " + " ".join(f"{k}={v}" for k, v in extra.items())
+            if len(meta) > 120:
+                meta = meta[:120] + "..."
+            self.chat.insert("end", f"\n    {meta}", "dim")
+
+        self.chat.insert("end", "\n")
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
     def _append_tool_result(self, result: str):
+        """Claude Code 风格：结果展示，按工具类型格式化。"""
+        is_err = any(kw in result[:100].lower() for kw in ("错误", "error", "失败", "❌"))
+        status_tag = "err" if is_err else "tool_r"
+
+        # 先捕获当前工具名（_active_tool 将在后面被清空）
+        current_tool = self._active_tool or ""
+
         self.chat.configure(state="normal")
-        # Determine status from result content
-        is_err = result.startswith("错误") or result.startswith("Error")
-        status = "error" if is_err else "done"
 
-        if self._active_tool:
-            self._set_tool_status(self._active_tool, status)
-            preview = result[:120].replace("\n", " ")
-            self._log_activity(self._active_tool, status, preview)
-            self._active_tool = None
+        # 绿色/红色箭头 + 结果摘要
+        prefix = "✗ " if is_err else "✔ "
+        summary = result[:200].replace("\n", " ")
+        self.chat.insert("end", f"    {prefix}", status_tag)
+        self.chat.insert("end", f"{summary}\n", status_tag)
 
-        trunc = result[:300] + "..." if len(result) > 300 else result
-        self.chat.insert("end", f"    ← {trunc}\n", "tool_r" if not is_err else "err")
+        # 根据工具类型展示更多内容
+        # 读文件：展示文件内容（代码风格）
+        if current_tool == "read" and result and not is_err:
+            lines = result.split("\n")
+            shown = lines[:8]
+            for line in shown:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 8:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行\n", "dim")
+                for line in lines[-3:]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "code")
+
+        # bash 输出：显示最后几行
+        if current_tool == "bash" and result and not is_err:
+            lines = [l for l in result.split("\n") if l.strip()]
+            if len(lines) > 6:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行输出\n", "dim")
+                for line in lines[-4:]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "dim")
+
+        # 写/编辑成功：绿色确认
+        if current_tool in ("write", "edit", "replace") and not is_err:
+            if "字节" in result or "字符" in result:
+                self.chat.insert("end", f"      {result[:200]}\n", "dim")
+
         self.chat.see("end")
         self.chat.configure(state="disabled")
+
+        # 更新工具状态
+        if current_tool:
+            self._set_tool_status(current_tool, "error" if is_err else "done")
+            preview = result[:80].replace("\n", " ")
+            self._log_activity(current_tool, "error" if is_err else "done", preview)
+            self._active_tool = None
 
     # ── Actions ──
 
