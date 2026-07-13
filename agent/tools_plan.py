@@ -137,6 +137,17 @@ def _handle_plan(action: str = "list", title: str = "", plan_id: str = "",
     os.makedirs(PLANS_DIR, exist_ok=True)
 
     try:
+        # 动作别名映射（LLM 常说的词 vs 工具实际接受的词）
+        action_aliases = {
+            "update_step": "update",
+            "update_status": "update",
+            "show_plan": "show",
+            "list_plans": "list",
+            "create_plan": "create",
+            "new_plan": "create",
+        }
+        action = action_aliases.get(action, action)
+
         if action == "create":
             if not title or not steps:
                 return "[错误] create 需要 title 和 steps 参数"

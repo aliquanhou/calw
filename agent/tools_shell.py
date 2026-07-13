@@ -108,7 +108,7 @@ class BuildRunner:
             p = subprocess.Popen(
                 scmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace",
+                text=True, encoding=_enc, errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
             if output_callback:
@@ -249,6 +249,17 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
 
     is_interactive = is_build and any(k in command for k in ["expo", "npx ", "npm install", "pip install"])
 
+    # 自动检测系统编码（Windows 中文 GBK 修复）
+    _enc = "utf-8"
+    if sys.platform == "win32":
+        try:
+            import locale
+            e = locale.getpreferredencoding(do_setlocale=False)
+            if e and e.lower() not in ("utf-8", "utf8"):
+                _enc = e
+        except Exception:
+            pass
+
     try:
         # 选择 shell
         if sys.platform == "win32":
@@ -279,7 +290,7 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
             p = subprocess.Popen(
                 shell_cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace",
+                text=True, encoding=_enc, errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
             lines = []
