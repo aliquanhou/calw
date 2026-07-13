@@ -266,6 +266,7 @@ class AgentApp(ctk.CTk):
         self.tool_status: dict[str, str] = {t: "idle" for t in TOOL_ICONS}
         self.tool_activity: list[dict] = []
         self._active_tool: str | None = None
+        self._active_tool_input: dict = {}  # 保存工具调用时的参数，用于结果展示
         self._active_tool_start: float = 0.0
         self._tool_start_time: float = 0.0
         self._last_output_time: float = time.time()
@@ -882,6 +883,7 @@ class AgentApp(ctk.CTk):
             if self._active_tool and self._active_tool != name:
                 self._set_tool_status(self._active_tool, "done")
             self._active_tool = name
+            self._active_tool_input = inp  # ← 保存输入参数
             self._active_tool_start = time.time()
             self._set_tool_status(name, "running")
             self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
@@ -1062,19 +1064,38 @@ class AgentApp(ctk.CTk):
         is_err = any(kw in result[:100].lower() for kw in ("错误", "error", "失败", "❌"))
         status_tag = "err" if is_err else "tool_r"
 
-        # 先捕获当前工具名（_active_tool 将在后面被清空）
         current_tool = self._active_tool or ""
+        current_inp = self._active_tool_input or {}
 
         self.chat.configure(state="normal")
 
-        # 绿色/红色箭头 + 结果摘要
+        # 状态标记 + 结果摘要
         prefix = "✗ " if is_err else "✔ "
         summary = result[:200].replace("\n", " ")
         self.chat.insert("end", f"    {prefix}", status_tag)
         self.chat.insert("end", f"{summary}\n", status_tag)
 
-        # 根据工具类型展示更多内容
-        # 读文件：展示文件内容（代码风格）
+        # ── write / edit：展示写入了什么内容 ──
+        if current_tool in ("write",) and current_inp.get("content") and not is_err:
+            content = current_inp["content"]
+            lines = content.split("\n")
+            preview = lines[:12]  # 前 12 行
+            for line in preview:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 12:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行\n", "dim")
+
+        if current_tool in ("edit",) and current_inp.get("new_string") and not is_err:
+            new_text = current_inp["new_string"]
+            lines = new_text.split("\n")
+            preview = lines[:8]
+            self.chat.insert("end", f"      ↓ 替换为:\n", "tool")
+            for line in preview:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 8:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行\n", "dim")
+
+        # ── read：展示文件内容 ──
         if current_tool == "read" and result and not is_err:
             lines = result.split("\n")
             shown = lines[:8]
@@ -1085,7 +1106,7 @@ class AgentApp(ctk.CTk):
                 for line in lines[-3:]:
                     self.chat.insert("end", f"      {line[:200]}\n", "code")
 
-        # bash 输出：显示最后几行
+        # ── bash：最后几行输出 ──
         if current_tool == "bash" and result and not is_err:
             lines = [l for l in result.split("\n") if l.strip()]
             if len(lines) > 6:
@@ -1093,20 +1114,16 @@ class AgentApp(ctk.CTk):
                 for line in lines[-4:]:
                     self.chat.insert("end", f"      {line[:200]}\n", "dim")
 
-        # 写/编辑成功：绿色确认
-        if current_tool in ("write", "edit", "replace") and not is_err:
-            if "字节" in result or "字符" in result:
-                self.chat.insert("end", f"      {result[:200]}\n", "dim")
-
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
-        # 更新工具状态
+        # 更新工具状态面板
         if current_tool:
             self._set_tool_status(current_tool, "error" if is_err else "done")
             preview = result[:80].replace("\n", " ")
             self._log_activity(current_tool, "error" if is_err else "done", preview)
             self._active_tool = None
+            self._active_tool_input = {}
 
     # ── Actions ──
 
