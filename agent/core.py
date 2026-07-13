@@ -21,6 +21,22 @@ from .prompt import build_system_prompt
 from .providers import create_llm_provider
 
 
+# ── v2.0 兼容：StreamHandler ──
+
+class StreamHandler:
+    """v2.0 GUI 兼容的流处理器。"""
+    def on_text(self, text: str) -> None: pass
+    def on_thinking(self, text: str) -> None: pass
+    def on_tool_start(self, name: str, input_data: dict) -> None: pass
+    def on_tool_result(self, result: str) -> None: pass
+    def on_tool_output(self, text: str) -> None: pass
+    def on_turn_plan(self, tool_count: int) -> None: pass
+    def on_turn_summary(self, summary: str) -> None: pass
+    def on_error(self, error: str) -> None: pass
+    def on_turn_end(self) -> None: pass
+    def on_complete(self) -> None: pass
+
+
 # ── Agent 配置 ──
 
 DEFAULT_CONFIG = {
@@ -74,11 +90,30 @@ class Agent:
         # 记录本地状态
         set_state(self.state)
 
-    def run(self, user_message: str) -> str:
+    def run_iteration(self, user_input: str, handler: StreamHandler | None = None) -> None:
+        """v2.0 兼容接口：流式执行一条用户输入。"""
+        handler = handler or StreamHandler()
+        self._last_user_msg = user_input
+
+        try:
+            # 流式执行，实时回调 handler
+            on_text = lambda t: handler.on_text(t)
+            on_tool_start = lambda n, i: handler.on_tool_start(n, i)
+            on_tool_result = lambda r: handler.on_tool_result(r)
+
+            result = self.run(user_input, on_text=on_text, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
+            if result:
+                handler.on_complete()
+        except Exception as e:
+            handler.on_error(str(e))
+
+    def run(self, user_message: str, on_text=None, on_tool_start=None, on_tool_result=None) -> str:
         """处理一条用户消息，返回最终回复。
 
         Args:
             user_message: 用户输入的文本
+            on_text: 流式文本回调（每收到一段文本就调用）
+            on_tool_start: 工具调用开始时回调 (name, input_data)
 
         Returns:
             Agent 的回复文本
@@ -92,8 +127,8 @@ class Agent:
         # 2. 获取可用工具列表
         tools = get_all_tools()
 
-        # 3. 构建系统提示
-        system_prompt = build_system_prompt(user_id=self.user_id)
+        # 3. 构建系统提示（传入工具列表）
+        system_prompt = build_system_prompt(user_id=self.user_id, tools=tools)
 
         # 4. 工具调用循环
         final_response = ""
@@ -108,38 +143,51 @@ class Agent:
                 final_response += "\n[系统: 请求超时]"
                 break
 
-            # 调用 LLM
+            # 调用 LLM（流式）
             try:
-                response = self.provider.complete(
+                response = self.provider.stream_complete(
                     system=system_prompt,
                     messages=messages,
                     tools=tools,
                     max_tokens=self.config["max_tokens"],
                     temperature=self.config["temperature"],
+                    on_text=on_text,
+                    on_tool_start=on_tool_start,
                 )
             except Exception as e:
                 error_msg = f"[LLM 调用失败: {e}]"
                 self.state.log_error("llm_complete", str(e))
                 final_response += f"\n{error_msg}"
 
-                # 重试逻辑
+                # 重试逻辑（指数退避 + 智能判断）
                 if self.config.get("retry_on_failure"):
+                    from .retry import is_retryable as _is_retryable, sleep_with_backoff as _sleep_with_backoff
                     retries = 0
-                    while retries < self.config.get("max_retries", 2):
+                    max_retries = self.config.get("max_retries", 2)
+                    last_error = None
+                    while retries < max_retries:
                         retries += 1
                         try:
-                            time.sleep(1)
-                            response = self.provider.complete(
+                            time.sleep(0.5)
+                            response = self.provider.stream_complete(
                                 system=system_prompt,
                                 messages=messages,
                                 tools=tools,
                                 max_tokens=self.config["max_tokens"],
                                 temperature=self.config["temperature"],
+                                on_text=on_text,
+                                on_tool_start=on_tool_start,
                             )
                             break
-                        except Exception:
-                            continue
+                        except Exception as e:
+                            last_error = e
+                            if retries < max_retries and _is_retryable(e):
+                                _sleep_with_backoff(retries - 1)
+                                continue
+                            break
                     else:
+                        if last_error:
+                            final_response += f"\n[重试 {max_retries} 次后仍然失败: {last_error}]"
                         break
                 else:
                     break
@@ -148,20 +196,20 @@ class Agent:
             content = response.get("content", "")
             tool_calls = response.get("tool_calls", [])
 
-            # 追加助手的回复（带 Token 压缩）
-            if content:
-                assistant_msg = {"role": "assistant", "content": content}
-                messages.append(assistant_msg)
-                final_response = content
-
-            # 如果没有工具调用，对话结束
+            # 如果没有工具调用，简单追加文本回复
             if not tool_calls:
+                if content:
+                    assistant_msg = {"role": "assistant", "content": content}
+                    messages.append(assistant_msg)
+                    final_response = content
                 break
 
-            # 处理工具调用
-            assistant_tool_msg = {
+            # 有工具调用：建一条 assistant 消息（文本 + tool_calls 合并）
+            if content:
+                final_response = content
+            assistant_msg = {
                 "role": "assistant",
-                "content": content or "",
+                "content": content or None,
                 "tool_calls": [],
             }
             tool_results = []
@@ -191,7 +239,11 @@ class Agent:
                         "arguments": json.dumps(args, ensure_ascii=False),
                     },
                 }
-                assistant_tool_msg["tool_calls"].append(tool_call_entry)
+                assistant_msg["tool_calls"].append(tool_call_entry)
+
+                # 通知 UI：工具开始执行
+                if on_tool_start:
+                    on_tool_start(tool_name, args)
 
                 # 推测性执行：尝试消费预执行结果
                 pre_result = None
@@ -225,15 +277,20 @@ class Agent:
                 }
                 tool_results.append(tool_result_msg)
 
+                # 通知 UI：工具结果（只发摘要）
+                if on_tool_result:
+                    on_tool_result(result_str[:500])
+
             # 追加助手的工具调用消息
-            if assistant_tool_msg.get("tool_calls"):
-                messages.append(assistant_tool_msg)
+            if assistant_msg.get("tool_calls"):
+                messages.append(assistant_msg)
 
             # 追加工具结果消息
             messages.extend(tool_results)
 
             # 上下文压缩（超过阈值时触发）
-            self._compact_context(messages)
+            if self.config.get("enable_context_compression", True):
+                self._compact_context(messages)
 
         # 5. 保存对话到记忆
         self.state.save_conversation(messages)
@@ -241,7 +298,11 @@ class Agent:
         return final_response
 
     def _compact_context(self, messages: list):
-        """上下文压缩：当消息数超过阈值时，压缩早期消息。"""
+        """上下文压缩：超过阈值时调用 context.compress_messages() 渐进压缩。
+
+        使用 context.py 的 4 阶段压缩（截断→压缩→丢弃→摘要），
+        确保对话始终在模型上下文窗口内。
+        """
         limit = self.config.get("compact_threshold", 0.8)
         max_msgs = self.config.get("max_context_messages", 50)
         threshold = int(max_msgs * limit)
@@ -249,10 +310,34 @@ class Agent:
         if len(messages) <= threshold:
             return
 
-        # 保留最近的 max_msgs 条消息
-        keep = messages[-max_msgs:]
-        messages.clear()
-        messages.extend(keep)
+        try:
+            from .context import compress_messages
+            model_name = self.config.get("model", "")
+            system_prompt = self.system_prompt or ""
+            compressed = compress_messages(messages, system_prompt, model_name)
+            messages.clear()
+            messages.extend(compressed)
+        except Exception:
+            pass
+
+    @property
+    def messages(self) -> list:
+        """v2.0 兼容：messages 属性代理到 state。"""
+        return self.state.get_all_messages()
+
+    @messages.setter
+    def messages(self, value: list):
+        """v2.0 兼容：允许直接赋值 messages。"""
+        self.state.save_conversation(value or [])
+
+    @property
+    def system_prompt(self) -> str:
+        """v2.0 兼容：system_prompt 属性。"""
+        return getattr(self, '_system_prompt', '')
+
+    @system_prompt.setter
+    def system_prompt(self, value: str):
+        self._system_prompt = value
 
     def close(self):
         """清理 Agent 资源。"""

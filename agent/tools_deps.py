@@ -1,6 +1,10 @@
 """tools_deps — 包依赖自动修复。
 
-检测 import 错误 → 自动安装缺失包，支持 pip / npm。
+v2.1 重写：
+  - 统一返回格式
+  - 类型注解
+  - 改进的错误信息
+  - 修复 scan_requirements 死代码
 """
 
 from __future__ import annotations
@@ -46,39 +50,25 @@ KNOWN_PACKAGE_MAP: dict[str, str] = {
     "openai": "openai",
     "anthropic": "anthropic",
     "customtkinter": "customtkinter",
-    "tkinter": "tkinter",  # part of standard lib
+    "chromadb": "chromadb",
 }
 
 
 def extract_missing_modules(text: str) -> list[str]:
-    """从错误输出中提取缺失的模块名。
-
-    支持格式:
-      - ModuleNotFoundError: No module named 'xxx'
-      - ImportError: No module named xxx
-      - Error: Cannot find module 'xxx'
-      - MODULE_NOT_FOUND
-    """
+    """从错误输出中提取缺失的模块名。"""
     modules = []
-
-    # Python ModuleNotFoundError
     m = re.findall(r"ModuleNotFoundError[^:]*:\s*(?:No module named\s+)?['\"]?(\w+)['\"]?", text, re.I)
     modules.extend(m)
-
-    # Python ImportError
     m = re.findall(r"ImportError[^:]*:\s*(?:No module named\s+)?['\"]?(\w+)['\"]?", text, re.I)
     modules.extend(m)
-
-    # Node.js
+    # Node.js module not found
     m = re.findall(r"Cannot find module\s+['\"](\w+)['\"]", text, re.I)
     modules.extend(m)
-
-    # 去重
     seen: set[str] = set()
     result = []
     for mod in modules:
         mod = mod.strip()
-        if mod and mod not in seen and mod not in KNOWN_PACKAGE_MAP.get("tkinter", ""):
+        if mod and mod not in seen:
             seen.add(mod)
             result.append(mod)
     return result
@@ -86,15 +76,12 @@ def extract_missing_modules(text: str) -> list[str]:
 
 def resolve_package_name(module_name: str) -> str:
     """将 import 模块名转为 pip 包名。"""
-    if module_name in KNOWN_PACKAGE_MAP:
-        return KNOWN_PACKAGE_MAP[module_name]
-    # 默认同名
-    return module_name
+    return KNOWN_PACKAGE_MAP.get(module_name, module_name)
 
 
 def is_stdlib(module_name: str) -> bool:
-    """粗略判断是否为标准库模块。"""
-    stdlib_modules = {
+    """判断是否为 Python 标准库模块。"""
+    return module_name in {
         "os", "sys", "json", "re", "time", "datetime", "math", "random",
         "collections", "itertools", "functools", "pathlib", "shutil",
         "subprocess", "threading", "multiprocessing", "io", "base64",
@@ -102,23 +89,16 @@ def is_stdlib(module_name: str) -> bool:
         "copy", "pprint", "logging", "warnings", "traceback",
         "unittest", "argparse", "configparser", "tempfile",
         "textwrap", "string", "urllib", "http", "socket", "ssl",
-        "html", "xml", "csv", "json", "sqlite3",
+        "html", "xml", "csv", "sqlite3",
     }
-    return module_name in stdlib_modules
 
 
 def install_package(module_name: str, timeout: int = 120) -> str:
-    """安装缺失的 Python 包。
-
-    Returns:
-        安装结果描述。
-    """
+    """安装缺失的 Python 包。"""
     if is_stdlib(module_name):
-        return f"'{module_name}' 是 Python 标准库模块，不需要安装"
+        return f"[跳过] '{module_name}' 是标准库模块"
 
     pkg = resolve_package_name(module_name)
-    if pkg == module_name and module_name in KNOWN_PACKAGE_MAP.values():
-        pkg = module_name
 
     try:
         r = subprocess.run(
@@ -126,67 +106,46 @@ def install_package(module_name: str, timeout: int = 120) -> str:
             capture_output=True, text=True, timeout=timeout,
         )
         if r.returncode == 0:
-            return f"✅ 已自动安装: {pkg}"
-        else:
-            stderr = r.stderr.strip()[:300]
-            return f"❌ 安装 {pkg} 失败: {stderr}"
+            return f"[安装] ✅ {pkg}"
+        return f"[失败] ❌ 安装 {pkg}: {r.stderr.strip()[:200]}"
     except subprocess.TimeoutExpired:
-        return f"⏱ 安装 {pkg} 超时({timeout}s)"
+        return f"[超时] ⏱ 安装 {pkg}（{timeout}s）"
     except Exception as e:
-        return f"❌ 安装异常: {e}"
-
-
-def scan_requirements(path: str | None = None) -> list[dict]:
-    """扫描项目依赖配置文件，检查缺失的包。"""
-    root = path or os.getcwd()
-    missing = []
-
-    # 检查 requirements.txt
-    req_file = os.path.join(root, "requirements.txt")
-    if os.path.exists(req_file):
-        try:
-            with open(req_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or line.startswith("-"):
-                        continue
-                    pkg = re.split(r"[<>=!~]", line)[0].strip()
-                    if pkg:
-                        # 快速检查是否已安装
-                        try:
-                            subprocess.run(
-                                [sys.executable, "-m", "pip", "show", pkg],
-                                capture_output=True, text=True, timeout=15,
-                            )
-                        except:
-                            pass
-                        if True:  # simple check
-                            pass
-        except Exception:
-            pass
-
-    return missing
+        return f"[错误] 安装异常: {e}"
 
 
 def _handle_deps(action: str = "check", module_name: str = "", text: str = "") -> str:
-    """dep 工具入口。"""
-    if action == "install":
-        if not module_name:
-            return "需指定 module_name"
-        return install_package(module_name)
+    """包依赖管理：检查/安装/自动修复。
 
-    if action == "auto":
-        if not text:
-            return "需提供错误文本"
-        modules = extract_missing_modules(text)
-        if not modules:
-            return "未检测到缺失的模块"
-        results = []
-        for mod in modules[:3]:  # 最多装3个
-            results.append(install_package(mod))
-        return "\n".join(results)
+    Args:
+        action: check（就绪检查）| install（安装指定包）| auto（从错误文本自动安装）
+        module_name: 要安装的模块名
+        text: 包含错误信息的文本（auto 模式使用）
 
-    if action == "check":
-        return "dep 工具就绪。使用 action='auto' 传入错误文本自动安装，或 action='install' 指定模块名。"
+    Returns:
+        操作结果
+    """
+    try:
+        if action == "install":
+            if not module_name:
+                return "[错误] install 需要 module_name 参数"
+            return install_package(module_name)
 
-    return f"未知操作: {action}"
+        if action == "auto":
+            if not text:
+                return "[错误] auto 需要 text 参数（包含错误信息）"
+            modules = extract_missing_modules(text)
+            if not modules:
+                return "[检测] 未检测到缺失模块"
+            results = []
+            for mod in modules[:3]:
+                results.append(install_package(mod))
+            return "\n".join(results)
+
+        if action == "check":
+            return "[就绪] dep 工具可用。使用 auto 自动检测安装，或 install 指定模块名。"
+
+        return f"[错误] 未知操作: {action}（可用: check/install/auto）"
+
+    except Exception as e:
+        return f"[错误] dep 操作失败: {e}"

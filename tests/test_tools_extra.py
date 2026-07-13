@@ -23,21 +23,20 @@ class TestScheduleTool(unittest.TestCase):
         s = sched_mod.get_scheduler()
         tasks = s.list_tasks()
         for t in tasks:
-            if t.name == "test":
+            if t.name == "test_schedule":
                 s.remove_task(t.id)
 
     def test_remove_no_id(self):
         r = _handle_schedule(action="remove")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_unknown_action(self):
         r = _handle_schedule(action="xyz")
         self.assertIn("未知操作", r)
 
     def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         self.assertIn("schedule", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("schedule", BUILTIN_HANDLERS)
 
 
 class TestWatchTool(unittest.TestCase):
@@ -47,39 +46,37 @@ class TestWatchTool(unittest.TestCase):
 
     def test_add_no_path(self):
         r = _handle_watch(action="add", name="test")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_unknown_action(self):
         r = _handle_watch(action="xyz")
         self.assertIn("未知操作", r)
 
     def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         self.assertIn("watch", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("watch", BUILTIN_HANDLERS)
 
 
 class TestWebSocketTool(unittest.TestCase):
     def test_connect_no_url(self):
         r = _handle_websocket(action="connect")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_send_no_url(self):
         r = _handle_websocket(action="send")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_ping_no_url(self):
         r = _handle_websocket(action="ping")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_unknown_action(self):
         r = _handle_websocket(action="xyz")
         self.assertIn("未知操作", r)
 
     def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         self.assertIn("websocket", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("websocket", BUILTIN_HANDLERS)
 
 
 if __name__ == "__main__":

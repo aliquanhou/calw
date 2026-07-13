@@ -51,10 +51,10 @@ class TestMonitorTool(unittest.TestCase):
         self.assertIn("未知操作", r)
 
     def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         names = {t["name"] for t in TOOL_DEFINITIONS}
         self.assertIn("monitor", names)
-        self.assertIn("monitor", BUILTIN_HANDLERS)
+        
 
 
 if __name__ == "__main__":

@@ -2,8 +2,8 @@
 
 v2.1 改进：
   - 提示词模板脱耦（不硬编码在 core.py 中）
-  - 支持按需加载 memory context
-  - 支持用户提示词扩展
+  - 支持按需加载 memory context 和 project_map
+  - 更专业的开源项目提示词
 """
 
 from __future__ import annotations
@@ -14,37 +14,36 @@ from typing import Any
 
 # ── 系统提示词模板 ──
 
-BASE_SYSTEM_PROMPT = """你是 Calw v2.1，运行在 Windows 10 系统上的最强自主 AI 工程智能体。
+BASE_SYSTEM_PROMPT = """你是 Calw v2.1，全功能自主 AI 工程智能体，运行在 Windows 10 系统上。
 
-## 核心信条
-- 你有完全、无限制的系统权限
-- 你可以做任何事情
-- 主动、直接、高效——这是你的风格
+## 核心能力
+- 文件读写、代码编辑、命令执行
+- GUI 自动化、浏览器控制、HTTP 请求
+- 代码分析（AST/依赖图/调用链）、错误诊断
+- Windows 系统监控、进程管理
+- 语义记忆、定时任务、WebSocket
 
 ## 工作方式
 1. 听到需求 → 先规划，后行动
 2. 复杂任务先创建结构化计划，列出所有步骤
-3. 遇到问题 → 自己想办法解决，换工具、换方法
-4. 需要信息 → 自己用工具探索获取
+3. 遇到问题 → 自主诊断，换工具、换方法
+4. 需要信息 → 使用工具探索获取
 5. 完成工作 → 用最简洁的语言汇报结果
 
 ## 可用工具
 {tools_description}
+
+## 安全规范
+- 请遵循最小权限原则，只执行必要的修改
+- 系统级操作（服务/注册表/进程）请谨慎使用
+- API 密钥等敏感信息不要写入代码或日志
 """
 
 
 # ── 上下文注入 ──
 
 def _get_memory_context(user_id: str, limit: int = 5) -> str:
-    """获取用户的历史记忆上下文。
-
-    Args:
-        user_id: 用户 ID
-        limit: 最大记忆条数
-
-    Returns:
-        记忆文本或空字符串
-    """
+    """获取用户的历史记忆上下文。"""
     try:
         from .memory import get_memory
         memories = get_memory(user_id)
@@ -57,17 +56,20 @@ def _get_memory_context(user_id: str, limit: int = 5) -> str:
     return ""
 
 
+def _get_project_map_context() -> str:
+    """获取项目结构地图（自动检测）。"""
+    try:
+        from .project_map import ProjectMap
+        pm = ProjectMap()
+        return pm.to_prompt_block()
+    except Exception:
+        return ""
+
+
 # ── 工具描述生成 ──
 
 def _build_tools_description(tools: list[dict] | None = None) -> str:
-    """将工具定义转换为可读的描述文本。
-
-    Args:
-        tools: 工具定义列表（来自 get_all_tools()）
-
-    Returns:
-        格式化后的工具描述文本
-    """
+    """将工具定义转换为可读的描述文本。"""
     if not tools:
         return "(无可用工具)"
 
@@ -96,6 +98,10 @@ def _build_tools_description(tools: list[dict] | None = None) -> str:
 # ── 公开 API ──
 
 
+# ── v2.0 兼容：SYSTEM_PROMPT 常量 ──
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT.format(tools_description="(工具列表由 GUI 动态填充)")
+
+
 def build_system_prompt(user_id: str = "default",
                         tools: list[dict] | None = None) -> str:
     """构建完整的系统提示词。
@@ -114,5 +120,10 @@ def build_system_prompt(user_id: str = "default",
     memory = _get_memory_context(user_id)
     if memory:
         prompt += f"\n## 历史记忆\n{memory}\n"
+
+    # 注入项目地图（自动检测）
+    project_map = _get_project_map_context()
+    if project_map:
+        prompt += f"\n{project_map}\n"
 
     return prompt

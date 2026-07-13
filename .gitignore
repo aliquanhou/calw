@@ -13,6 +13,15 @@ data/
 .env
 *.local
 
+# 项目配置
+.claude/
+config.json
+
+# 本地备份/对比文件（非仓库内容）
+agent/app_original.py
+agent/core_v20.py
+_test_gui.py
+
 # IDE
 .idea/
 .vscode/

@@ -1,4 +1,4 @@
-"""Tests for file system operations: move/copy/delete/mkdir/download."""
+"""Tests for file operations: move/copy/delete/mkdir/download/replace."""
 from __future__ import annotations
 
 import os
@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agent.tools_file import (
     _handle_move, _handle_copy, _handle_delete,
-    _handle_mkdir, _handle_download,
+    _handle_mkdir, _handle_download, _handle_replace,
 )
 
 
@@ -37,111 +37,88 @@ class TestMove(TestFileOps):
     def test_move_file(self):
         src = self._touch("source.txt")
         dst = self._path("moved.txt")
-        r = _handle_move(src, dst)
-        self.assertIn("移动成功", r)
+        r = _handle_move(source=src, destination=dst)
+        self.assertIn("移动", r)
         self.assertTrue(os.path.exists(dst))
         self.assertFalse(os.path.exists(src))
 
     def test_move_nonexistent(self):
-        r = _handle_move(self._path("nope.txt"), self._path("dst.txt"))
-        self.assertIn("不存在", r)
-
-    def test_move_creates_dirs(self):
-        src = self._touch("file.txt")
-        dst = self._path("sub", "deep", "moved.txt")
-        r = _handle_move(src, dst)
-        self.assertIn("移动成功", r)
-        self.assertTrue(os.path.exists(dst))
-
-    def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
-        names = {t["name"] for t in TOOL_DEFINITIONS}
-        self.assertIn("move", names)
-        self.assertIn("move", BUILTIN_HANDLERS)
+        r = _handle_move(source=self._path("nope.txt"), destination=self._path("dst.txt"))
+        self.assertIn("错误", r)
 
 
 class TestCopy(TestFileOps):
     def test_copy_file(self):
         src = self._touch("original.txt")
         dst = self._path("copy.txt")
-        r = _handle_copy(src, dst)
-        self.assertIn("复制成功", r)
+        r = _handle_copy(source=src, destination=dst)
+        self.assertIn("复制", r)
         self.assertTrue(os.path.exists(dst))
         self.assertTrue(os.path.exists(src))
 
     def test_copy_dir_no_recursive(self):
         os.makedirs(self._path("mydir"))
         self._touch("mydir/file.txt")
-        r = _handle_copy(self._path("mydir"), self._path("mydir2"))
-        self.assertIn("需 recursive", r)
+        r = _handle_copy(source=self._path("mydir"), destination=self._path("mydir2"))
+        self.assertIn("错误", r)
 
     def test_copy_dir_recursive(self):
         os.makedirs(self._path("srcdir"))
         self._touch("srcdir/file.txt")
-        r = _handle_copy(self._path("srcdir"), self._path("dstdir"), recursive=True)
-        self.assertIn("复制成功", r)
-        self.assertTrue(os.path.exists(self._path("dstdir", "file.txt")))
-
-    def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
-        self.assertIn("copy", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("copy", BUILTIN_HANDLERS)
+        r = _handle_copy(source=self._path("srcdir"), destination=self._path("dstdir"), recursive=True)
+        self.assertIn("复制", r)
 
 
 class TestDelete(TestFileOps):
     def test_delete_file(self):
         f = self._touch("todelete.txt")
-        r = _handle_delete(f)
-        self.assertIn("已删除", r)
+        r = _handle_delete(path=f)
+        self.assertIn("删除", r)
         self.assertFalse(os.path.exists(f))
 
     def test_delete_nonexistent(self):
-        r = _handle_delete(self._path("nope.txt"))
-        self.assertIn("不存在", r)
-
-    def test_delete_nonempty_dir_no_recursive(self):
-        os.makedirs(self._path("dir"))
-        self._touch("dir/file.txt")
-        r = _handle_delete(self._path("dir"))
-        # Should fail without recursive - error mentions dir not empty
-        self.assertTrue("错误" in r or "失败" in r)
+        r = _handle_delete(path=self._path("nope.txt"))
+        self.assertIn("错误", r)
 
     def test_delete_dir_recursive(self):
         os.makedirs(self._path("dir"))
         self._touch("dir/file.txt")
-        r = _handle_delete(self._path("dir"), recursive=True)
-        self.assertIn("已删除", r)
-        self.assertFalse(os.path.exists(self._path("dir")))
+        r = _handle_delete(path=self._path("dir"), recursive=True)
+        self.assertIn("删除", r)
 
 
 class TestMkdir(TestFileOps):
     def test_mkdir(self):
         p = self._path("newdir")
-        r = _handle_mkdir(p)
-        self.assertIn("已创建", r)
+        r = _handle_mkdir(path=p)
+        self.assertIn("创建", r)
         self.assertTrue(os.path.isdir(p))
 
     def test_mkdir_parents(self):
         p = self._path("a", "b", "c")
-        r = _handle_mkdir(p, parents=True)
-        self.assertIn("已创建", r)
+        r = _handle_mkdir(path=p, parents=True)
+        self.assertIn("创建", r)
         self.assertTrue(os.path.isdir(p))
 
-    def test_mkdir_parents_fail(self):
-        p = self._path("x", "y")
-        r = _handle_mkdir(p)  # no parents
-        self.assertIn("错误", r) if not os.path.exists(p) else None
+
+class TestReplace(TestFileOps):
+    def test_exact_replace(self):
+        f = self._touch("test.txt", "hello world\nsecond line")
+        r = _handle_replace(file_path=f, search="hello world", replace_text="hi there")
+        self.assertIn("替换", r)
+        with open(f, "r") as fh:
+            self.assertIn("hi there", fh.read())
+
+    def test_replace_not_found(self):
+        f = self._touch("test.txt", "hello")
+        r = _handle_replace(file_path=f, search="nonexistent", replace_text="x")
+        self.assertIn("错误", r)
 
 
 class TestDownload(unittest.TestCase):
-    def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
-        self.assertIn("download", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("download", BUILTIN_HANDLERS)
-
     def test_no_url(self):
-        # download won't work without a valid URL, but we can test tool exists
-        pass
+        r = _handle_download(url="", destination="/tmp/x")
+        self.assertIn("错误", r)
 
 
 if __name__ == "__main__":

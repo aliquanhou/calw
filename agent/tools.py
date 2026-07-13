@@ -81,8 +81,23 @@ def get_tool(name: str) -> dict | None:
 
 
 def get_all_tools() -> list[dict]:
-    """获取所有已注册的工具定义列表。"""
-    return [{"type": "function", "function": t} for t in _TOOL_REGISTRY.values()]
+    """获取所有已注册的工具定义列表。
+    
+    返回的 dict 是 LLM API 兼容格式：
+    只包含工具描述信息，不包含 handler 函数。
+    """
+    result = []
+    for t in _TOOL_REGISTRY.values():
+        # 只传 LLM 需要的字段，不传 handler
+        result.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["parameters"],
+            }
+        })
+    return result
 
 
 def execute_tool(name: str, params: dict) -> str:
@@ -205,12 +220,31 @@ def _register_builtins():
     """注册 Calw 内置工具。
 
     显式调用，取代之前的模块级副作用模式。
+    覆盖 v2.0 全部 36+ 工具。
     """
-    # 加载各模块中的 _handle_* 函数
     tool_modules = [
-        "agent.file_ops",
+        # 文件操作
+        "agent.tools_file",
+        # 命令执行
         "agent.command",
+        "agent.tools_shell",
+        # 浏览器
         "agent.tools_browser",
+        # 网络
+        "agent.tools_web",
+        # 代码分析
+        "agent.tools_analysis",
+        # 测试 & 依赖
+        "agent.tools_test",
+        "agent.tools_deps",
+        # 系统工具
+        "agent.tools_system",
+        # 计划 & 后台
+        "agent.tools_plan",
+        # 记忆
+        "agent.tools_memory",
+        # 增强工具（定时/监控/WebSocket）
+        "agent.tools_extra",
     ]
 
     for module in tool_modules:
@@ -219,6 +253,38 @@ def _register_builtins():
         except Exception as e:
             print(f"[tools] 加载模块失败 {module}: {e}")
 
+    # 注册插件工具
+    _register_plugins()
+
+
+def _register_plugins():
+    """注册 plugins/ 目录下的插件工具。"""
+    import importlib
+    plugins_dir = os.path.join(os.path.dirname(__file__), "plugins")
+    if not os.path.isdir(plugins_dir):
+        return
+    for fname in os.listdir(plugins_dir):
+        if fname.endswith(".py") and fname != "__init__.py":
+            mod_name = fname[:-3]
+            try:
+                mod = importlib.import_module(f".plugins.{mod_name}", package="agent")
+                if hasattr(mod, "register"):
+                    result = mod.register()
+                    if isinstance(result, dict):
+                        name = result.get("name", mod_name)
+                        handler = result.get("handler")
+                        desc = result.get("description", "")
+                        schema = result.get("input_schema", {})
+                        if handler:
+                            _TOOL_REGISTRY[name] = {
+                                "name": name,
+                                "handler": handler,
+                                "description": desc,
+                                "parameters": schema,
+                            }
+            except Exception as e:
+                print(f"[tools] 插件加载失败 {mod_name}: {e}")
+
 
 def init_tools():
     """初始化工具系统（显式调用，无模块级副作用）。
@@ -226,3 +292,9 @@ def init_tools():
     必须在 Agent 启动时显式调用一次。
     """
     _register_builtins()
+
+
+# ── v2.0 向后兼容导出 ──
+# 允许旧代码通过 from agent.tools import TOOL_DEFINITIONS 继续工作
+from .tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS, PLUGIN_HANDLERS  # noqa: E402, F401
+from .tools_core import handle_tool_call, smart_truncate  # noqa: E402, F401

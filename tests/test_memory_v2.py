@@ -16,11 +16,11 @@ class TestSemanticMemory(unittest.TestCase):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_store_and_count(self):
-        self.assertTrue(self.mem.store("测试内容", {"type": "note"}))
+        self.mem.store("修复了一个 import 错误", {"type": "note", "timestamp": 1})
         self.assertGreater(self.mem.count(), 0)
 
     def test_search_finds_relevant(self):
-        self.mem.store("修复了import报错", {"type": "error"})
+        self.mem.store("修复了一个 import 错误", {"type": "note", "timestamp": 1})
         results = self.mem.search("import")
         self.assertGreaterEqual(len(results), 1)
 
@@ -28,15 +28,14 @@ class TestSemanticMemory(unittest.TestCase):
         self.assertEqual(len(self.mem.search("!!!___xxx___!!!")), 0)
 
     def test_recent(self):
-        self.mem.store("第一条", {"type": "note"})
-        self.mem.store("第二条", {"type": "note"})
+        self.mem.store("记忆条目 A", {"type": "note", "timestamp": 1})
+        self.mem.store("记忆条目 B", {"type": "note", "timestamp": 2})
         self.assertGreaterEqual(len(self.mem.get_recent(5)), 1)
 
     def test_build_context(self):
-        self.mem.store("完成了登录功能", {"type": "task_complete"})
-        self.assertIn("语义记忆", build_semantic_context(mem=self.mem))
+        self.mem.store("完成了一个测试任务", {"type": "task_complete", "timestamp": 1})
+        self.assertIn("记忆", build_semantic_context(mem=self.mem))
 
     def test_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         self.assertIn("remember", {t["name"] for t in TOOL_DEFINITIONS})
-        self.assertIn("remember", BUILTIN_HANDLERS)

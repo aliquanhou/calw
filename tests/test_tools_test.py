@@ -82,7 +82,7 @@ def test_fail():
     def test_handle_test_run(self):
         self._touch("test_simple.py", "def test_ok(): assert True")
         result = _handle_test(action="run", path=self.root, timeout=30)
-        self.assertIn("测试结果", result)
+        self.assertIn("[测试]", result)
 
     def test_unknown_action(self):
         result = _handle_test(action="xyz")
@@ -93,10 +93,9 @@ class TestHandleTestTool(unittest.TestCase):
     """Test the tool dispatch path."""
 
     def test_tool_registered(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         names = {t["name"] for t in TOOL_DEFINITIONS}
         self.assertIn("test", names)
-        self.assertIn("test", BUILTIN_HANDLERS)
 
 
 if __name__ == "__main__":

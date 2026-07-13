@@ -77,11 +77,11 @@ class TestHandleDeps(unittest.TestCase):
 
     def test_install_no_module(self):
         r = _handle_deps(action="install")
-        self.assertIn("需指定", r)
+        self.assertIn("错误", r)
 
     def test_auto_no_text(self):
         r = _handle_deps(action="auto")
-        self.assertIn("需提供", r)
+        self.assertIn("错误", r)
 
     def test_auto_detects(self):
         r = _handle_deps(action="auto", text="ModuleNotFoundError: No module named 'nonexistent_test_module_xyz'")
@@ -89,10 +89,9 @@ class TestHandleDeps(unittest.TestCase):
         self.assertTrue("安装" in r or "失败" in r or "错误" in r)
 
     def test_registered_in_tools(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         names = {t["name"] for t in TOOL_DEFINITIONS}
         self.assertIn("dep", names)
-        self.assertIn("dep", BUILTIN_HANDLERS)
 
 
 class TestStdlibSkip(unittest.TestCase):

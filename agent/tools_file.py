@@ -253,3 +253,162 @@ def _handle_grep(pattern: str = "", path: str = "",
 
     except Exception as e:
         return f"[错误] 搜索失败: {e}"
+
+
+# ═══════════════════════════════════════════
+# 文件操作：移动 / 复制 / 删除 / 创建目录
+# ═══════════════════════════════════════════
+
+def _handle_move(source: str = "", destination: str = "") -> str:
+    """移动/重命名文件或目录。"""
+    if not source or not destination:
+        return "[错误] move 需要 source 和 destination 参数"
+    try:
+        src = os.path.abspath(source)
+        dst = os.path.abspath(destination)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.rename(src, dst)
+        return f"[移动] {source} → {destination}"
+    except FileNotFoundError:
+        return f"[错误] 源文件不存在: {source}"
+    except Exception as e:
+        return f"[错误] 移动失败: {e}"
+
+
+def _handle_copy(source: str = "", destination: str = "", recursive: bool = False) -> str:
+    """复制文件或目录。"""
+    if not source or not destination:
+        return "[错误] copy 需要 source 和 destination 参数"
+    try:
+        src = os.path.abspath(source)
+        dst = os.path.abspath(destination)
+        if os.path.isdir(src):
+            if not recursive:
+                return "[错误] 复制目录需要 recursive=True"
+            import shutil
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            return f"[复制] 目录 {source} → {destination}"
+        else:
+            import shutil
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+            return f"[复制] {source} → {destination}"
+    except FileNotFoundError:
+        return f"[错误] 源路径不存在: {source}"
+    except Exception as e:
+        return f"[错误] 复制失败: {e}"
+
+
+def _handle_delete(path: str = "", recursive: bool = False) -> str:
+    """删除文件或目录。"""
+    if not path:
+        return "[错误] delete 需要 path 参数"
+    try:
+        abs_path = os.path.abspath(path)
+        if not os.path.exists(abs_path):
+            return f"[错误] 路径不存在: {path}"
+        if os.path.isdir(abs_path):
+            if not recursive:
+                return "[错误] 删除目录需要 recursive=True"
+            import shutil
+            shutil.rmtree(abs_path)
+            return f"[删除] 目录: {path}"
+        else:
+            os.remove(abs_path)
+            return f"[删除] 文件: {path}"
+    except Exception as e:
+        return f"[错误] 删除失败: {e}"
+
+
+def _handle_mkdir(path: str = "", parents: bool = False) -> str:
+    """创建目录。"""
+    if not path:
+        return "[错误] mkdir 需要 path 参数"
+    try:
+        abs_path = os.path.abspath(path)
+        if parents:
+            os.makedirs(abs_path, exist_ok=True)
+        else:
+            os.mkdir(abs_path)
+        return f"[创建目录] {path}"
+    except FileNotFoundError:
+        return f"[错误] 父目录不存在（需要 parents=True）: {path}"
+    except FileExistsError:
+        return f"[错误] 目录已存在: {path}"
+    except Exception as e:
+        return f"[错误] 创建目录失败: {e}"
+
+
+def _handle_download(url: str = "", destination: str = "") -> str:
+    """从 URL 下载文件到本地路径。"""
+    if not url or not destination:
+        return "[错误] download 需要 url 和 destination 参数"
+    try:
+        import urllib.request
+        abs_path = os.path.abspath(destination)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        urllib.request.urlretrieve(url, abs_path)
+        size = os.path.getsize(abs_path)
+        return f"[下载] {url} → {destination}（{size} 字节）"
+    except Exception as e:
+        return f"[错误] 下载失败: {e}"
+
+
+def _handle_replace(file_path: str = "", search: str = "", replace_text: str = "", partial: bool = False) -> str:
+    """SEARCH/REPLACE 替换（支持模糊匹配）。"""
+    if not file_path or not search:
+        return "[错误] replace 需要 file_path 和 search 参数"
+    abs_path = os.path.abspath(file_path)
+    if not os.path.exists(abs_path):
+        return f"[错误] 文件不存在: {abs_path}"
+
+    try:
+        with open(abs_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 精确匹配
+        count = content.count(search)
+        if count == 1:
+            new_content = content.replace(search, replace_text)
+        elif count == 0 and partial:
+            # 模糊匹配：逐行尝试
+            import re
+            lines = content.split("\n")
+            search_lines = search.split("\n")
+            matched = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                search_stripped = search_lines[0].strip()
+                if stripped == search_stripped or (len(stripped) > 20 and stripped[:20] == search_stripped[:20]):
+                    # 尝试多行匹配
+                    match_len = 1
+                    while match_len < len(search_lines) and i + match_len < len(lines):
+                        if lines[i + match_len].strip() == search_lines[match_len].strip():
+                            match_len += 1
+                        else:
+                            break
+                    if match_len >= max(2, len(search_lines) // 2):
+                        lines[i:i + match_len] = replace_text.split("\n")
+                        matched = True
+                        break
+            if not matched:
+                return f"[错误] 未找到匹配文本（已尝试模糊匹配）"
+            new_content = "\n".join(lines)
+        elif count > 1:
+            return f"[错误] 文本出现 {count} 次，无法确定替换位置"
+        else:
+            return f"[错误] 未找到匹配文本"
+
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        return f"[替换成功] {file_path}"
+
+    except Exception as e:
+        return f"[错误] 替换失败: {e}"
+
+
+def _handle_revert(file_path: str = "") -> str:
+    """撤销对文件的修改（TODO: 需接入备份系统）。"""
+    return "[revert] 该功能需要接入备份系统（v2.2 支持）"
+

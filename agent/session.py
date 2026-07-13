@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -74,6 +75,16 @@ class SessionState:
         self.session_id = str(uuid.uuid4())
         self.created_at = datetime.now().isoformat()
         self._lock = threading.Lock()
+
+        # 向后兼容：工具注册等
+        self._tool_registry: dict[str, dict] = {}
+        self._plugin_handlers: dict = {}
+        self._builtin_handlers: dict = {}
+        self._tool_definitions: list = []
+        self._plugins_loaded: bool = False
+        self._last_heal_time: float = 0.0
+        self._file_lessons: dict[str, list] = {}
+        self._spawned_pids: set = set()
 
         # 数据存储目录
         self._data_dir = data_dir or os.path.join(
@@ -198,8 +209,103 @@ class SessionState:
         # 消息已实时持久化，这里仅确保配置保存
         pass
 
+    # ── 工具注册（向后兼容 tools_core）──
+
+    def __init_extra__(self):
+        """初始化工具注册相关状态。"""
+        if not hasattr(self, '_tool_registry'):
+            self._tool_registry: dict[str, dict] = {}
+            self._plugin_handlers: dict = {}
+            self._builtin_handlers: dict = {}
+            self._tool_definitions: list = []
+            self._plugins_loaded: bool = False
+            self._last_heal_time: float = 0.0
+            self._file_lessons: dict[str, list] = {}
+
+    @property
+    def plugin_handlers(self) -> dict:
+        return self._plugin_handlers
+
+    @property
+    def builtin_handlers(self) -> dict:
+        return self._builtin_handlers
+
+    @property
+    def tool_definitions(self) -> list:
+        return self._tool_definitions
+
+    @property
+    def plugins_loaded(self) -> bool:
+        return getattr(self, '_plugins_loaded', False)
+
+    @plugins_loaded.setter
+    def plugins_loaded(self, val: bool):
+        self._plugins_loaded = val
+
+    def register_tool(self, name: str, handler, definition: dict, is_plugin: bool = False):
+        """注册一个工具到会话状态。"""
+        self.__init_extra__()
+        self._tool_registry[name] = {"handler": handler, "definition": definition}
+        if is_plugin:
+            self._plugin_handlers[name] = handler
+        else:
+            self._builtin_handlers[name] = handler
+        # 确保 definition 在 tool_definitions 中
+        exists = any(t.get("name") == name for t in self._tool_definitions)
+        if not exists and "name" in definition:
+            self._tool_definitions.append(definition)
+
+    def get_handler(self, tool_name: str):
+        """获取工具处理函数。"""
+        self.__init_extra__()
+        # 优先从 tools 注册表获取
+        if tool_name in self._tool_registry:
+            return self._tool_registry[tool_name]["handler"]
+        # 其次从旧版 handlers 获取
+        if tool_name in self._builtin_handlers:
+            return self._builtin_handlers[tool_name]
+        if tool_name in self._plugin_handlers:
+            return self._plugin_handlers[tool_name]
+        # 尝试从 tools.py 获取
+        try:
+            from .tools import get_tool
+            t = get_tool(tool_name)
+            if t:
+                return t.get("handler")
+        except Exception:
+            pass
+        return None
+
+    def should_heal(self, interval: int = 60) -> bool:
+        """检查是否应当执行自愈操作。"""
+        now = time.time()
+        if now - getattr(self, '_last_heal_time', 0) > interval:
+            self._last_heal_time = now
+            return True
+        return False
+
+    def get_lessons_for_file(self, file_path: str) -> list:
+        """获取文件的失败教训记录。"""
+        self.__init_extra__()
+        return self._file_lessons.get(file_path, [])
+
+    def add_lesson_for_file(self, file_path: str, lesson: dict):
+        """添加文件的失败教训。"""
+        self.__init_extra__()
+        if file_path not in self._file_lessons:
+            self._file_lessons[file_path] = []
+        self._file_lessons[file_path].append(lesson)
+
+    @property
+    def spawned_pids(self) -> set:
+        """获取已生成的子进程 PID 集合。"""
+        if not hasattr(self, '_spawned_pids'):
+            self._spawned_pids = set()
+        return self._spawned_pids
+
     def _load(self):
         """从磁盘加载已有数据。"""
+        self.__init_extra__()
         # 加载消息历史
         if os.path.exists(self._message_file):
             try:

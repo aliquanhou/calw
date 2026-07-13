@@ -17,8 +17,6 @@ from .prompt import SYSTEM_PROMPT
 from .providers import (
     AnthropicProvider,
     OpenAIProvider,
-    get_provider,
-    get_default_provider,
 )
 from .scheduler import get_scheduler
 from .watcher import get_watcher
@@ -89,6 +87,28 @@ PROVIDER_PRESETS = {
 }
 
 PROVIDER_NAMES = list(PROVIDER_PRESETS.keys())
+
+# ── v2.0 兼容：get_default_provider / get_provider 内联 ──
+
+def _get_default_provider() -> str:
+    return PROVIDER_NAMES[0] if PROVIDER_NAMES else "OpenAI"
+
+def _get_provider(provider_name: str, api_key: str, model: str, base_url: str | None = None) -> OpenAIProvider | AnthropicProvider:
+    if provider_name == "Anthropic Claude":
+        return AnthropicProvider({
+            "api_key": api_key,
+            "model": model or "claude-sonnet-4-20250514",
+            "base_url": base_url or "",
+        })
+    else:
+        return OpenAIProvider({
+            "api_key": api_key,
+            "model": model or "gpt-4o",
+            "base_url": base_url or PROVIDER_PRESETS.get(provider_name, {}).get("base_url", ""),
+        })
+
+get_default_provider = _get_default_provider
+get_provider = _get_provider
 
 
 # ── UI Stream Handler ──
@@ -648,8 +668,19 @@ class AgentApp(ctk.CTk):
         if not self.api_key:
             return
         try:
-            p = get_provider(self.provider_name, self.api_key, self.model, self.base_url)
-            self.agent = Agent(p, system_prompt=self.system_prompt)
+            # Agent 配置（v2.1 新 API）
+            config = {
+                "api_key": self.api_key,
+                "model": self.model,
+                "base_url": self.base_url,
+                "max_tokens": 8192,
+                "temperature": 0.0,
+                "request_timeout": 120,
+                "max_tool_rounds": 50,
+                "enable_speculative": True,
+                "enable_streaming_parser": True,
+            }
+            self.agent = Agent(config=config)
             self.provider_label.configure(text=self.provider_name)
 
             # Show memory stats if available

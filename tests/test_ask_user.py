@@ -57,10 +57,10 @@ class TestAskUser(unittest.TestCase):
 
     def test_empty_question(self):
         r = _handle_ask_user(question="")
-        self.assertIn("需要你的决定", r)
+        self.assertIn("错误", r)
 
     def test_registered_in_tools(self):
-        from agent.tools import TOOL_DEFINITIONS, BUILTIN_HANDLERS
+        from agent.tools_core import TOOL_DEFINITIONS, BUILTIN_HANDLERS
         names = {t["name"] for t in TOOL_DEFINITIONS}
         self.assertIn("ask_user", names)
 

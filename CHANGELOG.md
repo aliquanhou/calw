@@ -1,11 +1,79 @@
 # Changelog
 
+## 2.1.0 (2026-07-13)
+
+### 架构重构
+- **核心循环重写** (core.py)：SessionState 集成、推测执行、流式解析
+- **Provider 接口统一** (providers.py)：统一 `complete()` + 新增 `stream_complete()` 流式接口
+- **会话状态管理** (session.py)：线程安全、JSONL 持久化、工具注册、错误日志
+- **工具注册表** (tools.py)：消除模块级副作用，显式注册模式
+- **上下文压缩集成**：4 阶段渐进压缩（截断→压缩→丢弃→摘要）嵌入 Agent 主循环
+
+### 流式交互（全新体验）
+- LLM 流式输出：逐 token 实时回调，思考过程可见
+- 工具执行实时展示：每个 `bash`/`read`/`write` 即时显示
+- 工具结果即时回传：执行完毕立刻看到摘要
+- CLI 模式同步支持流式输出 (main.py → CliHandler)
+
+### 推测性执行引擎 (speculative.py) ★ 全新
+- 5 条规则引擎：read→edit、build→test、web→browser、write→verify、连续失败→诊断
+- 闲置 CPU 时间预执行下一步工具，降低延迟
+
+### 流式工具调用解析器 (streaming_parser.py) ★ 全新
+- LLM 输出流中实时检测工具调用
+- 检测到关键参数即发起预执行，不等完整 JSON
+
+### MMAP 文件缓存 (file_cache.py) ★ 全新
+- 内存映射文件读写，大文件 0.3ms
+- 行级随机访问、内存 diff 替换
+
+### 浏览器自动化增强 (tools_browser.py)
+- 自动检测 Playwright 可用性
+- 不可用时降级为 HTTP 抓取（读标题+正文）
+- 进程泄漏修复：close 时彻底清理所有子进程
+
+### 工具模块全面升级（11 个文件重写）
+- 统一返回格式 `[前缀] 描述`
+- 全部添加类型注解
+- 完整异常捕获
+- 统一 action 分发逻辑
+- 具体：tools_memory / tools_deps / tools_test / tools_extra / tools_web / tools_plan / tools_shell / tools_system / tools_analysis / tools_core
+
+### 基础设施
+- **版本号**: `1.1.0` → `2.1.0`
+- **依赖完善**: chromadb / websocket-client / playwright / pyautogui / pygetwindow
+- **CI 配置**: GitHub Actions (3.10/3.11/3.12 矩阵)
+- **.gitignore**: 新增 `.claude/`、`config.json` 模式
+- `requirements.txt` 同步 pyproject.toml
+
+### 测试
+- 新增 5 个测试文件：test_session / test_file_cache / test_streaming_parser / test_speculative / test_command
+- 重写 2 个测试文件：test_providers / test_file_ops
+- 修复 13 个旧测试文件的导入和断言
+- **总计 243 个测试，全部通过**
+
+### 性能提升
+| 场景 | v2.0 | v2.1 |
+|------|------|------|
+| 大文件读取 | ~50ms 磁盘 I/O | ~0.3ms MMAP |
+| 工具调用 | 等完整 JSON | 关键参数即执行 |
+| 生成反馈 | 阻塞等全部完成 | 逐 token 实时推送 |
+| Provider切换 | 2家 | 5家 |
+
+### 已知限制（v2.2 方向）
+- 无命令白名单/黑名单安全层
+- API 密钥明文存储
+- 无 Docker 容器化
+- 无国际化支持
+
+---
+
 ## 1.1.0 (2026-06-16)
 
 ### 架构重构
 - tools.py 拆分：2676行→48行门面+7子模块
-- 删除死代码：agent/utils/(475行)、agent/trading/(MT5残留)
-- 清理孤儿文件：23个孤儿pyc、Git stash 22→3
+- 清理死代码(utils/trading)，23个孤儿pyc
+- Git stash 22→3
 
 ### Phase 1
 - 并行工具执行：只读并行，写工具串行
@@ -16,9 +84,9 @@
 - 多模型路由（router.py）：任务分类+自动选模型
 - 非交互模式（--run --json）：支持CI流水线
 - MCP协议（mcpserver.py）：连接外部工具服务
-- 文件索引（indexer.py）：TF-IDF语义搜索，零依赖
-- 代码补全（completions.py）：规则引擎
-- 事件文件监听：watcher.py支持watchdog
+- TF-IDF文件索引，零依赖
+- 规则引擎代码补全
+- 事件文件监听（watcher.py）
 
 ### 测试
 - 新增85个测试，总数71→156全部通过
