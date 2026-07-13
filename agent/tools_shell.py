@@ -199,9 +199,10 @@ def _run_powershell(script: str) -> str:
         命令输出
     """
     try:
-        p = subprocess.run(
+        from ._encoding import run as _ps_run
+        p = _ps_run(
             ["powershell", "-NoProfile", "-Command", script],
-            capture_output=True, text=True, errors="replace", timeout=30,
+            timeout=30,
         )
         o = p.stdout.rstrip() if p.stdout else ""
         e = p.stderr.rstrip() if p.stderr else ""
