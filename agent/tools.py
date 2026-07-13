@@ -100,15 +100,41 @@ def get_all_tools() -> list[dict]:
     return result
 
 
+def _coerce_params(handler: Callable, params: dict) -> dict:
+    """根据函数类型注解，强制转换参数类型（修复 LLM 传字符串而非 int/bool 的问题）。"""
+    import inspect
+    sig = inspect.signature(handler)
+    coerced = dict(params)
+    for pname, param in sig.parameters.items():
+        if pname not in coerced:
+            continue
+        annotation = param.annotation
+        if annotation is inspect.Parameter.empty:
+            continue
+        val = coerced[pname]
+        if annotation is int and not isinstance(val, int):
+            try:
+                coerced[pname] = int(val)
+            except (ValueError, TypeError):
+                coerced[pname] = param.default if param.default is not inspect.Parameter.empty else 0
+        elif annotation is bool and not isinstance(val, bool):
+            if isinstance(val, str):
+                coerced[pname] = val.lower() in ("true", "1", "yes")
+            else:
+                coerced[pname] = bool(val)
+        elif annotation is float and not isinstance(val, (int, float)):
+            try:
+                coerced[pname] = float(val)
+            except (ValueError, TypeError):
+                coerced[pname] = param.default if param.default is not inspect.Parameter.empty else 0.0
+    return coerced
+
+
 def execute_tool(name: str, params: dict) -> str:
-    """执行一个工具（带统一异常处理）。
+    """执行一个工具（带统一异常处理 + 类型自动转换）。
 
-    Args:
-        name: 工具名称
-        params: 参数字典
-
-    Returns:
-        工具执行结果字符串（失败时返回错误描述）
+    自动根据函数类型注解转换参数类型（int/bool/float），
+    避免 LLM 传字符串导致 '>' not supported between instances 错误。
     """
     tool_def = _TOOL_REGISTRY.get(name)
     if not tool_def:
@@ -116,7 +142,9 @@ def execute_tool(name: str, params: dict) -> str:
 
     handler = tool_def["handler"]
     try:
-        result = handler(**params)
+        # 类型安全转换（LLM 常传字符串而非 int/bool）
+        safe_params = _coerce_params(handler, params)
+        result = handler(**safe_params)
         # 统一转字符串
         if result is None:
             return ""

@@ -879,16 +879,27 @@ class AgentApp(ctk.CTk):
             self._chat_stream(d, "think")
         elif t == "tool_start":
             name, inp = d
-            # Mark previous tool as done if switching
-            if self._active_tool and self._active_tool != name:
-                self._set_tool_status(self._active_tool, "done")
-            self._active_tool = name
-            self._active_tool_input = inp  # ← 保存输入参数
-            self._active_tool_start = time.time()
-            self._set_tool_status(name, "running")
-            self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
-            self._append_tool(name, inp)
-            # Update status bar: show what tool is running
+            # 避免重复显示：streaming 阶段先发空{}，core.py 执行循环再发真实参数
+            if self._active_tool == name:
+                # 第二次调用：只更新参数，不重复显示
+                self._active_tool_input = inp
+            else:
+                # 上一个工具完成
+                if self._active_tool:
+                    self._set_tool_status(self._active_tool, "done")
+                self._active_tool = name
+                self._active_tool_input = inp
+                self._active_tool_start = time.time()
+                self._set_tool_status(name, "running")
+                self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
+                # 显示步骤编号（如 [1/3]）
+                step_prefix = ""
+                if self._turn_total > 1:
+                    step_num = self._turn_done + 1
+                    step_prefix = f"  [{step_num}/{self._turn_total}]"
+                self._append_tool(name, inp, step_prefix)
+
+            # 状态栏更新
             verb = TOOL_DESCRIPTIONS.get(name, name)
             cmd_preview = ""
             if name == "bash" and "command" in inp:
@@ -915,6 +926,8 @@ class AgentApp(ctk.CTk):
             self._turn_total = d
             self._turn_done = 0
             self._update_task_progress()
+            if d > 1:
+                self._chat_line(f"  📋 计划执行 {d} 个步骤", "sys")
         elif t == "error":
             if self._active_tool:
                 self._set_tool_status(self._active_tool, "error")
@@ -1034,28 +1047,38 @@ class AgentApp(ctk.CTk):
             return inp["path"]
         return ""
 
-    def _append_tool(self, name: str, inp: dict):
-        """Claude Code 风格：工具名 + 目标（同一行），绿色箭头指示。"""
+    def _append_tool(self, name: str, inp: dict, step_prefix: str = ""):
+        """Claude Code 风格：工具名 + 目标 + 参数，一行展示。"""
         self.chat.configure(state="normal")
         icon = self._tool_label(name)
         path = self._tool_path_display(inp)
 
-        # 工具行：📖 read  main.py
-        line = f"  {icon} {name}"
-        self.chat.insert("end", line, "tool")
+        # 工具行：📖 read  main.py  [1/5]
+        line = f"  {step_prefix}{icon} {name}"
+
+        # 显示目标路径
         if path:
-            self.chat.insert("end", f"  {path}", "tool_path")
+            line += f"  {path}"
+
+        # write/edit：显示行数
+        if name == "write" and "content" in inp:
+            lines_count = len(inp["content"].split("\n"))
+            line += f"  (+{lines_count} 行)"
+        if name == "edit" and "new_string" in inp:
+            lines_count = len(inp["new_string"].split("\n"))
+            line += f"  (改 {lines_count} 行)"
+
+        self.chat.insert("end", line + "\n", "tool")
 
         # 额外参数用小字灰色显示
         extra = {k: v for k, v in inp.items()
-                 if k not in ("file_path", "command", "url", "pattern", "query", "path") and v}
+                 if k not in ("file_path", "command", "url", "pattern", "query", "path", "content") and v}
         if extra:
-            meta = "  " + " ".join(f"{k}={v}" for k, v in extra.items())
-            if len(meta) > 120:
-                meta = meta[:120] + "..."
-            self.chat.insert("end", f"\n    {meta}", "dim")
+            meta = "    " + " ".join(f"{k}={v}" for k, v in extra.items())
+            if len(meta) > 150:
+                meta = meta[:150] + "..."
+            self.chat.insert("end", meta + "\n", "dim")
 
-        self.chat.insert("end", "\n")
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
@@ -1072,8 +1095,21 @@ class AgentApp(ctk.CTk):
         # 状态标记 + 结果摘要
         prefix = "✗ " if is_err else "✔ "
         summary = result[:200].replace("\n", " ")
-        self.chat.insert("end", f"    {prefix}", status_tag)
-        self.chat.insert("end", f"{summary}\n", status_tag)
+
+        if is_err:
+            # 错误：全行红色醒目
+            self.chat.insert("end", f"    ── ❌ 错误 ──\n", "err")
+            self.chat.insert("end", f"    {summary}\n", "err")
+            # 显示工具参数（帮助发现问题）
+            if current_inp:
+                param_str = json.dumps(current_inp, ensure_ascii=False)[:300]
+                self.chat.insert("end", f"    ⚙ {param_str}\n", "dim")
+            # 显示完整错误详情
+            if len(result) > 200:
+                for line in result.split("\n")[:6]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "dim")
+        else:
+            self.chat.insert("end", f"    {prefix}{summary}\n", status_tag)
 
         # ── write / edit：展示写入了什么内容 ──
         if current_tool in ("write",) and current_inp.get("content") and not is_err:

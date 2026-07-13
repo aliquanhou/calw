@@ -67,6 +67,11 @@ def _handle_web_search(query: str = "", max_results: int = 5) -> str:
     if not query:
         return "[错误] web_search 需要 query 参数"
 
+    # LLM 可能传字符串，确保转为 int
+    try:
+        max_results = int(max_results)
+    except (ValueError, TypeError):
+        max_results = 5
     max_results = min(max(max_results, 1), 10)
 
     try:
