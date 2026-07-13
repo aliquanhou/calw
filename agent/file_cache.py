@@ -248,3 +248,15 @@ def reset_cache():
     if _default_cache:
         _default_cache.close()
     _default_cache = None
+
+
+def release_cache():
+    """释放 MMAP 文件锁（构建前调用，防止 Windows 文件锁定）。
+
+    不清除文本缓存，只关闭 MMAP 映射释放文件句柄。
+    下次读取时会重新加载 MMAP。
+    """
+    global _default_cache
+    if _default_cache:
+        _default_cache.close()
+        _default_cache = FileCache(_default_cache._root)
