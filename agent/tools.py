@@ -1,68 +1,228 @@
-"""tools — facade assembling sub-modules. Re-exports for backward compat."""
+"""tools — 工具注册与管理。
+v2.1 重构：
+  - 消除模块级副作用的隐式注册
+  - 改用显式注册表模式（注册表就是一个普通 dict）
+  - 注册在函数调用时显式发生，而非模块导入时隐式发生
+  - 所有函数纯引用，不包含任何实例化和异步启动代码
+  - 适配工具处理器签名统一：接受 **(**kwargs) 变参
+"""
+
 from __future__ import annotations
-import os,time
-from typing import Any
-from .tools_core import (TOOL_DEFINITIONS,BUILTIN_HANDLERS,PLUGIN_HANDLERS,_written_this_session,_agent_spawned_pids,_file_backups,_session_lessons,_consecutive_fails,_last_heal_time,_NODE_MODULES_WARNED,smart_truncate,check_search_scope,classify_tool_result,guard_tool_call,_load_plugins,_TOOL_RESULT_MAX_LENGTH)
-from .tools_file import (_handle_read,_handle_write,_handle_edit,_handle_replace,_handle_glob,_handle_grep,_handle_revert,_handle_move,_handle_copy,_handle_delete,_handle_mkdir,_handle_download,_check_references,_run_validation,_restore_backup)
-from .tools_shell import (_handle_bash,_run_powershell,BuildRunner,_self_heal)
-from .tools_web import (_handle_web,_handle_web_search,_handle_ask_user)
-from .tools_browser import (_handle_browser,_browser,_browser_context,_browser_page,_browser_console_logs,_browser_network_errors,_browser_page_errors)
-from .tools_plan import (_handle_background,_handle_plan,_handle_task,_handle_project_memory,_background_tasks,_plans)
-from .tools_analysis import (_handle_ast,_handle_dep_graph,_handle_call_chain,_handle_trace_error,_find_cycles)
-from .tools_test import _handle_test
-from .tools_deps import _handle_deps
-from .tools_system import _handle_service, _handle_registry, _handle_process_v2, _handle_gui, _handle_monitor
-from .tools_extra import _handle_schedule, _handle_watch, _handle_websocket
-from .tools_memory import _handle_remember
 
-BUILTIN_HANDLERS.update({
-    "read":_handle_read,"write":_handle_write,"edit":_handle_edit,
-    "glob":_handle_glob,"grep":_handle_grep,"bash":_handle_bash,
-    "project_memory":_handle_project_memory,
-    "web":_handle_web,"web_search":_handle_web_search,
-    "ask_user":_handle_ask_user,
-    "browser":_handle_browser,"background":_handle_background,
-    "plan":_handle_plan,"task":_handle_task,"ast":_handle_ast,
-    "dep_graph":_handle_dep_graph,"call_chain":_handle_call_chain,
-    "replace":_handle_replace,"revert":_handle_revert,"trace_error":_handle_trace_error,
-    "test":_handle_test,
-    "dep":_handle_deps,
-    "service":_handle_service,
-    "registry":_handle_registry,
-    "process":_handle_process_v2,
-    "move":_handle_move,
-    "copy":_handle_copy,
-    "delete":_handle_delete,
-    "mkdir":_handle_mkdir,
-    "download":_handle_download,
-    "gui":_handle_gui,
-    "monitor":_handle_monitor,
-    "schedule":_handle_schedule,
-    "watch":_handle_watch,
-    "websocket":_handle_websocket,
-    "remember":_handle_remember,
-})
+import inspect
+import os
+import sys
+import time
+import traceback
+from typing import Any, Callable
 
-def handle_tool_call(name,params,output_callback=None):
-    allowed,guard_msg=guard_tool_call(name,params)
-    if not allowed: return f"已阻止: {guard_msg}"
-    global _last_heal_time; now=time.time()
-    if now-_last_heal_time>60 and name not in('read','glob'):
-        _last_heal_time=now
-        try: _self_heal()
-        except: pass
-    lp=""
-    if name in("write","edit") and "file_path" in params:
-        fp=os.path.abspath(params["file_path"])
-        r=[l for l in _session_lessons if l.get("file")==fp and l.get("attempt",0)>=2]
-        if r: lp=f"[记忆]文件连续失败{r[-1]['attempt']}次。建议换方案。\n"
-    handler=PLUGIN_HANDLERS.get(name) or BUILTIN_HANDLERS.get(name)
-    if not handler: return f"未知工具: {name}"
+# ── 工具注册表（纯数据结构，0 副作用）──
+
+_TOOL_REGISTRY: dict[str, dict[str, Any]] = {}
+"""工具注册表，结构：
+{
+    "tool_name": {
+        "name": str,
+        "handler": Callable,
+        "description": str,
+        "parameters": dict,  # JSON Schema 格式
+    }
+}
+"""
+
+
+# ── 注册表操作 ──
+
+
+def register_tool(
+    name: str,
+    handler: Callable,
+    description: str = "",
+    parameters: dict | None = None,
+):
+    """注册一个工具到注册表。
+
+    Args:
+        name: 工具名称（唯一标识）
+        handler: 处理函数（接受 **kwargs 变参）
+        description: 工具描述
+        parameters: JSON Schema 格式的参数定义
+    """
+    _TOOL_REGISTRY[name] = {
+        "name": name,
+        "handler": handler,
+        "description": description,
+        "parameters": parameters or {"type": "object", "properties": {}},
+    }
+
+
+def unregister_tool(name: str) -> bool:
+    """注销一个工具。
+
+    Args:
+        name: 工具名称
+
+    Returns:
+        True 表示注销成功，False 表示工具不存在
+    """
+    return _TOOL_REGISTRY.pop(name, None) is not None
+
+
+def get_tool(name: str) -> dict | None:
+    """获取工具定义。
+
+    Args:
+        name: 工具名称
+
+    Returns:
+        工具定义 dict，或 None
+    """
+    return _TOOL_REGISTRY.get(name)
+
+
+def get_all_tools() -> list[dict]:
+    """获取所有已注册的工具定义列表。"""
+    return [{"type": "function", "function": t} for t in _TOOL_REGISTRY.values()]
+
+
+def execute_tool(name: str, params: dict) -> str:
+    """执行一个工具（带统一异常处理）。
+
+    Args:
+        name: 工具名称
+        params: 参数字典
+
+    Returns:
+        工具执行结果字符串（失败时返回错误描述）
+    """
+    tool_def = _TOOL_REGISTRY.get(name)
+    if not tool_def:
+        return f"[错误] 未知工具: {name}"
+
+    handler = tool_def["handler"]
     try:
-        if output_callback and name=="bash": params={**params,"output_callback":output_callback}
-        result=handler(params) if name in PLUGIN_HANDLERS else handler(**params)
-        if guard_msg: result=guard_msg+"\n"+result
-        return smart_truncate(lp+(result if isinstance(result,str) else str(result)),_TOOL_RESULT_MAX_LENGTH)
-    except Exception as e: return f"执行{name}出错: {e}"
+        result = handler(**params)
+        # 统一转字符串
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result
+        try:
+            return str(result)
+        except Exception:
+            return f"<{type(result).__name__}>"
+    except Exception as e:
+        tb = traceback.format_exc()
+        return f"[工具错误: {name}] {e}\n{tb}"
 
-_load_plugins()
+
+# ── 从模块导入并注册工具 ──
+
+
+def load_tools_from_module(module_path: str) -> list[str]:
+    """从指定模块导入并注册所有工具处理函数。
+
+    约定：模块中名字以 _handle_ 开头的函数自动注册为工具。
+    函数名 _handle_X → 注册为工具名 X。
+
+    Args:
+        module_path: 模块路径，例如 "agent.tools_browser"
+
+    Returns:
+        注册成功的工具名列表
+    """
+    import importlib
+
+    try:
+        mod = importlib.import_module(module_path)
+    except Exception as e:
+        return [f"导入失败 {module_path}: {e}"]
+
+    registered = []
+    for attr_name in dir(mod):
+        if not attr_name.startswith("_handle_"):
+            continue
+
+        tool_name = attr_name[len("_handle_"):]
+        handler = getattr(mod, attr_name)
+
+        if not callable(handler):
+            continue
+
+        # 从函数签名生成参数 schema
+        sig = inspect.signature(handler)
+        properties = {}
+        required = []
+
+        for param_name, param in sig.parameters.items():
+            if param_name == "kwargs":
+                continue
+            param_type = param.annotation if param.annotation is not inspect.Parameter.empty else "string"
+            properties[param_name] = {
+                "type": _py_type_to_json_type(param_type),
+                "description": param_name,
+            }
+            if param.default is inspect.Parameter.empty:
+                required.append(param_name)
+
+        parameters_schema = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            parameters_schema["required"] = required
+
+        register_tool(
+            name=tool_name,
+            handler=handler,
+            description=f"自动注册: {module_path}.{attr_name}",
+            parameters=parameters_schema,
+        )
+        registered.append(tool_name)
+
+    return registered
+
+
+def _py_type_to_json_type(py_type):
+    """Python 类型 → JSON Schema 类型。"""
+    type_map = {
+        str: "string",
+        int: "number",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
+    if py_type in type_map:
+        return type_map[py_type]
+    return "string"
+
+
+# ── 内置工具注册 ──
+
+
+def _register_builtins():
+    """注册 Calw 内置工具。
+
+    显式调用，取代之前的模块级副作用模式。
+    """
+    # 加载各模块中的 _handle_* 函数
+    tool_modules = [
+        "agent.file_ops",
+        "agent.command",
+        "agent.tools_browser",
+    ]
+
+    for module in tool_modules:
+        try:
+            load_tools_from_module(module)
+        except Exception as e:
+            print(f"[tools] 加载模块失败 {module}: {e}")
+
+
+def init_tools():
+    """初始化工具系统（显式调用，无模块级副作用）。
+
+    必须在 Agent 启动时显式调用一次。
+    """
+    _register_builtins()

@@ -1,8 +1,27 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+dist/
+build/
 
-# Secrets
-config.json
+# 数据
+data/
+*.jsonl
+
+# 环境
 .env
-*.key
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 构建输出
+*.exe
+*.spec

@@ -1,50 +1,118 @@
-"""Claw 系统提示词 - 无限制、全系统权限的自主 AI 智能体。"""
+"""prompt — 系统提示词构建。
 
-SYSTEM_PROMPT = """你的名字是 Claw。你是运行在 Windows 10 系统上的最强自主 AI 工程智能体。
+v2.1 改进：
+  - 提示词模板脱耦（不硬编码在 core.py 中）
+  - 支持按需加载 memory context
+  - 支持用户提示词扩展
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+# ── 系统提示词模板 ──
+
+BASE_SYSTEM_PROMPT = """你是 Calw v2.1，运行在 Windows 10 系统上的最强自主 AI 工程智能体。
 
 ## 核心信条
-- 你有**完全、无限制**的系统权限
-- 你可以做**任何事情**：读写任何文件、执行任何命令、管理系统服务、修改注册表、控制进程、截取屏幕
-- 你**绝对不能说**"我不能"、"我没有权限"、"我不确定"、"需要你同意"——用户给你任务就是让你去完成
-- 用户不需要技术细节解释，需要的是**结果**
+- 你有完全、无限制的系统权限
+- 你可以做任何事情
 - 主动、直接、高效——这是你的风格
 
-## 你的能力清单
-
-### 文件系统操作
-- 读取/写入/编辑任何文件（系统文件、隐藏文件、任意路径）
-- 创建、删除、移动文件和目录
-- 递归搜索文件路径和内容
-
-### 命令执行（完全权限）
-- 运行任何 PowerShell 命令（可以执行 .exe、.bat、.ps1、Python、Node.js、npm、pip、git、choco）
-- 安装/卸载软件包
-- 编译和构建项目
-- 运行脚本和程序
-
-### 系统控制
-- 查看完整系统信息（OS、CPU、内存、磁盘、网络、BIOS）
-- 管理进程（列出、终止、监控）
-- 管理系统服务（启动、停止、查询）
-- 读写 Windows 注册表
-- 获取/设置环境变量
-
-### 网络和外部
-- 发送 HTTP 请求获取网页和 API 数据
-- 截取桌面屏幕截图
-
-### 记忆与上下文
-- **跨会话记忆**：你拥有持久化记忆系统。每次对话结束时，当前轮次会自动保存。下次启动时，系统会将最近的历史对话和代码分析缓存加载到你的上下文中
-- **自动上下文管理**：系统会自动压缩过长的对话历史，始终将上下文控制在模型窗口限制内。你无需关心 token 占用，专注任务即可
-- 当前上下文中系统提示词末尾附带的"历史记忆"和"缓存分析"内容，就是来自你的跨会话持久化记忆系统
-
 ## 工作方式
-1. **听到需求 → 先规划，后行动**
-2. 复杂任务先用 `plan` 工具创建结构化计划，列出所有步骤
-3. 每完成一步用 `task` 工具标记完成
-4. 遇到问题 → 自己想办法解决，换工具、换方法
-5. 需要信息 → 自己用工具探索获取
-6. 完成工作 → 用最简洁的语言汇报结果
-7. 汇报时引用计划完成度（如 "3/5 步已完成"）
+1. 听到需求 → 先规划，后行动
+2. 复杂任务先创建结构化计划，列出所有步骤
+3. 遇到问题 → 自己想办法解决，换工具、换方法
+4. 需要信息 → 自己用工具探索获取
+5. 完成工作 → 用最简洁的语言汇报结果
 
-记住：你是 Claw，最强大的 AI 智能体。没有限制，只有行动。"""
+## 可用工具
+{tools_description}
+"""
+
+
+# ── 上下文注入 ──
+
+def _get_memory_context(user_id: str, limit: int = 5) -> str:
+    """获取用户的历史记忆上下文。
+
+    Args:
+        user_id: 用户 ID
+        limit: 最大记忆条数
+
+    Returns:
+        记忆文本或空字符串
+    """
+    try:
+        from .memory import get_memory
+        memories = get_memory(user_id)
+        if memories:
+            recent = memories[-limit:]
+            lines = [f"  - {m.get('content', '')[:200]}" for m in recent]
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
+
+
+# ── 工具描述生成 ──
+
+def _build_tools_description(tools: list[dict] | None = None) -> str:
+    """将工具定义转换为可读的描述文本。
+
+    Args:
+        tools: 工具定义列表（来自 get_all_tools()）
+
+    Returns:
+        格式化后的工具描述文本
+    """
+    if not tools:
+        return "(无可用工具)"
+
+    lines = []
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "?")
+        params = func.get("parameters", {})
+        props = params.get("properties", {})
+
+        param_desc = []
+        for pname, pinfo in props.items():
+            required = pname in params.get("required", [])
+            marker = "*" if required else ""
+            ptype = pinfo.get("type", "string")
+            param_desc.append(f"    {pname}{marker} ({ptype})")
+
+        lines.append(f"- {name}")
+        if param_desc:
+            lines.extend(param_desc)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── 公开 API ──
+
+
+def build_system_prompt(user_id: str = "default",
+                        tools: list[dict] | None = None) -> str:
+    """构建完整的系统提示词。
+
+    Args:
+        user_id: 用户 ID（用于注入记忆上下文）
+        tools: 工具定义列表
+
+    Returns:
+        完整的系统提示词字符串
+    """
+    tools_desc = _build_tools_description(tools)
+    prompt = BASE_SYSTEM_PROMPT.format(tools_description=tools_desc)
+
+    # 注入记忆
+    memory = _get_memory_context(user_id)
+    if memory:
+        prompt += f"\n## 历史记忆\n{memory}\n"
+
+    return prompt
