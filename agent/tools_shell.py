@@ -234,20 +234,23 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
     if not command:
         return "[错误] bash 需要 command 参数"
 
-    # 超时调整
-    if "pip install" in command or "npm install" in command:
-        timeout = max(timeout, 300)
-    timeout = min(timeout, 600)
+    # 超时调整 — 长时间构建命令自动延长
+    _build_keywords = ["pip install", "npm install", "build", "apk", "gradle",
+                        "mvn ", "make ", "cmake", "python setup", "bundle",
+                        "expo", "npx "]
+    if any(k in command for k in _build_keywords):
+        timeout = max(timeout, 600)
+    timeout = min(timeout, 3600)  # 最大 60 分钟
 
     # 自愈检查（构建类命令）
     heal_result = ""
-    is_build = any(k in command for k in ["expo", "npx ", "npm ", "pip ", "npx"])
+    is_build = any(k in command for k in ["expo", "npx ", "npm ", "pip ", "npx", "build", "apk", "gradle", "make"])
     if is_build:
         heal_result = _self_heal()
         if heal_result and output_callback:
             output_callback(f"{heal_result}")
 
-    is_interactive = is_build and any(k in command for k in ["expo", "npx ", "npm install", "pip install"])
+    is_interactive = is_build  # 所有构建命令都用 BuildRunner（流式 + 心跳 + 超时终止）
 
     # 自动检测系统编码（Windows 中文 GBK 修复）
     _enc = "utf-8"
