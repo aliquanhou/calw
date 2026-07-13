@@ -1,8 +1,9 @@
-﻿"""File/process/log monitor — polling-based watch engine with event callback."""
+"""File/process/log monitor — polling-based watch engine with event callback."""
 from __future__ import annotations
 import os, re, subprocess, threading, time
 from dataclasses import dataclass, field
 from typing import Callable
+from ._encoding import run as _run, popen as _popen
 
 @dataclass
 class WatchEvent:
@@ -128,7 +129,7 @@ class FileWatcher:
 
     def _check_process(self,t):
         try:
-            r=subprocess.run(["powershell","-NoProfile","-Command",f"@(Get-Process -Name '{t.path}' -ErrorAction SilentlyContinue).Count"],capture_output=True,text=True,timeout=10)
+            r=_run(["powershell","-NoProfile","-Command",f"@(Get-Process -Name '{t.path}' -ErrorAction SilentlyContinue).Count"],capture_output=True,text=True,timeout=10)
             c=r.stdout.strip(); running=c.isdigit() and int(c)>0; prev=self._snapshots.get(f"proc_{t.path}",False)
             if running and not prev: self._fire(WatchEvent(t.id,t.name,"process_started",f"{t.path} 启动"))
             elif not running and prev: self._fire(WatchEvent(t.id,t.name,"process_stopped",f"{t.path} 停止"))

@@ -13,12 +13,13 @@ import os
 import subprocess
 import sys
 import time
+from ._encoding import run as _run, popen as _popen
 
 
 def _run_ps(script: str, timeout: int = 30) -> str:
     """运行 PowerShell 脚本并返回输出。"""
     try:
-        r = subprocess.run(
+        r = _run(
             ["powershell", "-NoProfile", "-Command", script],
             capture_output=True, text=True, errors="replace", timeout=timeout,
         )

@@ -12,6 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from ._encoding import run as _run, popen as _popen
 
 
 @dataclass
@@ -48,7 +49,7 @@ def _get_diff(repo_path: str | None = None) -> str:
             ["git", "diff", "--cached", "--no-color"],
             ["git", "diff", "HEAD", "--no-color"],
         ]:
-            r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=30)
+            r = _run(cmd, capture_output=True, text=True, cwd=cwd, timeout=30)
             if r.returncode == 0 and r.stdout.strip():
                 return r.stdout
     except Exception:

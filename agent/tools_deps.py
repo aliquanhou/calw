@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+from ._encoding import run as _run, popen as _popen
 
 
 # 已知的 PyPI 包名映射（import名 → pip包名）
@@ -101,7 +102,7 @@ def install_package(module_name: str, timeout: int = 120) -> str:
     pkg = resolve_package_name(module_name)
 
     try:
-        r = subprocess.run(
+        r = _run(
             [sys.executable, "-m", "pip", "install", pkg],
             capture_output=True, text=True, timeout=timeout,
         )

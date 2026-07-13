@@ -1,6 +1,7 @@
 """command — 命令执行工具。"""
 from __future__ import annotations
 import os,subprocess,sys
+from ._encoding import run as _run, popen as _popen
 
 
 def _handle_bash(command: str = "", timeout: int = 30) -> str:
@@ -9,7 +10,7 @@ def _handle_bash(command: str = "", timeout: int = 30) -> str:
         return "[错误] bash 需要 command 参数"
     try:
         sc = ["cmd.exe", "/c", command] if sys.platform == "win32" else ["bash", "-c", command]
-        r = subprocess.run(sc, capture_output=True, text=True, timeout=timeout, cwd=os.getcwd())
+        r = _run(sc, capture_output=True, text=True, timeout=timeout, cwd=os.getcwd())
         o = ""
         if r.stdout: o += r.stdout
         if r.stderr: o += ("\n" + r.stderr) if o else r.stderr
