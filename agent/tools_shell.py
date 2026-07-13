@@ -251,12 +251,13 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
         heal_result = _self_heal()
         if heal_result and output_callback:
             output_callback(f"{heal_result}")
-        # 构建前自动释放 MMAP 文件缓存锁（Windows 文件锁定修复）
-        try:
-            from .file_cache import release_cache
-            release_cache()
-        except Exception:
-            pass
+
+    # 每次命令执行前释放 MMAP 文件锁（防止文件被锁导致无法复制/写入/删除）
+    try:
+        from .file_cache import release_cache
+        release_cache()
+    except Exception:
+        pass
 
     is_interactive = is_build  # 所有构建命令都用 BuildRunner（流式 + 心跳 + 超时终止）
 
