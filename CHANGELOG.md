@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.1.1 (2026-07-13) — 取优补短
+
+### 从 v2.0 移植的模块（适配 v2.1 架构）
+- **retry.py**: 指数退避 + 随机抖动重试机制（装饰器/函数式/生成器三重 API）
+- **router.py**: 智能模型路由（按任务类型自动选最优模型）
+- **project_map.py**: 项目结构自动映射（注入 system prompt）
+- **researcher.py**: 深度研究引擎（分解问题→搜集资料→综合分析）
+- **reviewer.py**: 代码审查引擎（审查 diff/文件，结构化报告）
+- **mcpserver.py**: MCP 协议服务器管理（filesystem/git）
+- **plugin.py**: 插件系统正式暴露
+
+### Claude Code 风格交互（CLI + GUI 双模式）
+- **CLI (main.py)**: 完全重写 CliHandler
+  - 工具展示 `📖 read  main.py`（工具名+目标同一行）
+  - 步骤编号 `[1/3]` 多步骤计划
+  - 读文件：内容预览（头5行+尾3行）
+  - 写文件：写入内容预览（前12行）
+  - bash 输出：最后几行输出摘要
+  - 错误展示：红色大标题 + 工具参数 + 堆栈详情
+  - ANSI 颜色体系：橙工具·青路径·绿成功·红错误
+  - 工具执行时间显示（0.3s+ 显示耗时）
+
+- **GUI (app.py)**: 透明交互升级
+  - 工具展示：图标+名称+目标路径同一行
+  - write/edit 结果：展示写入/替换的内容预览
+  - read 结果：代码块展示文件内容
+  - bash 结果：最后几行输出
+  - 错误：红色醒目大标题 + 工具参数（方便调试）
+  - 步骤进度：`📋 计划执行 N 个步骤`
+  - 新增 `tool_path`/`code`/`dim`/`tool_meta` 渲染标签
+  - 修复：`on_tool_start`  重复调用不重复显示
+
+### 类型安全与错误修复
+- **tools.py**: 新增 `_coerce_params()` 全局类型安全转换层
+  - LLM 传 `max_results="10"` → 自动转 int(10)
+  - LLM 传 `recursive="true"` → 自动转 True
+  - 所有 36+ 工具统一受益
+- **tools_web.py**: `_handle_web_search` 加 `int()` 转换
+- **tools_shell.py**: 自动检测 Windows 系统编码（GBK/UTF-8），修复中文乱码
+- **tools_plan.py**: 新增 action 别名映射（`update_step`→`update` 等）
+
+### 安全修复
+- `config.json` 停止 git 追踪（`git rm --cached` + `.gitignore`）
+- 创建 `config.json.example` 模板
+- system prompt 移除"完全无限制权限"等不适当表述
+
+### 文档与示例
+- **TECHNICAL_WHITEPAPER.md**: 完整技术白皮书（中英双语，12 章）
+- **README.md**: 全面重写为 v2.1 版本
+- **examples/dashboard.html**: Calw 自生成的 3D 全息仪表盘（Three.js）
+- **CHANGELOG.md**: 更新到 2.1.1
+
+---
+
 ## 2.1.0 (2026-07-13)
 
 ### 架构重构
