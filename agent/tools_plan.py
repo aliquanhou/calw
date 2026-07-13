@@ -7,6 +7,7 @@ v2.1 重写：
 """
 
 from __future__ import annotations
+from ._encoding import enc as _ENC
 
 import json
 import os
@@ -37,7 +38,7 @@ def _handle_background(action: str = "list", command: str = "", task_id: str = "
             p = subprocess.Popen(
                 ["powershell", "-NoProfile", "-Command", command],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace",
+                text=True, encoding=_ENC, errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
             with _BT_LOCK:

@@ -17,6 +17,7 @@ import threading
 import time
 
 from .tools_core import smart_truncate, _TOOL_RESULT_MAX_LENGTH
+from ._encoding import enc
 
 
 # ── 自愈（清理孤儿进程）──
@@ -258,16 +259,8 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
 
     is_interactive = is_build  # 所有构建命令都用 BuildRunner（流式 + 心跳 + 超时终止）
 
-    # 自动检测系统编码（Windows 中文 GBK 修复）
-    _enc = "utf-8"
-    if sys.platform == "win32":
-        try:
-            import locale
-            e = locale.getpreferredencoding(do_setlocale=False)
-            if e and e.lower() not in ("utf-8", "utf8"):
-                _enc = e
-        except Exception:
-            pass
+    # 系统编码（统一来自 _encoding.py）
+    _enc = __import__('agent._encoding', fromlist=['enc']).enc
 
     try:
         # 选择 shell

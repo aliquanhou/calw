@@ -7,6 +7,7 @@ v2.1 重写：
 """
 
 from __future__ import annotations
+from ._encoding import enc as _ENC
 
 import os
 import re
@@ -72,7 +73,7 @@ def run_tests(path: str | None = None, test_name: str = "", timeout: int = 300) 
     cmd.extend(["-p", "no:cacheprovider"])
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding=_ENC,
                               errors="replace", timeout=timeout)
         raw = proc.stdout + "\n" + proc.stderr
     except subprocess.TimeoutExpired:
