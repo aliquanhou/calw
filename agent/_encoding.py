@@ -56,6 +56,7 @@ def run(args, **kwargs):
     """subprocess.run 包装——捕获原始字节，智能解码。"""
     kwargs.pop("text", None)
     kwargs.pop("encoding", None)
+    kwargs.pop("errors", None)  # 防止 errors 被 Python 隐式转为 text=True
     kwargs["capture_output"] = True
     result = subprocess.run(args, **kwargs)
     stdout = _decode(result.stdout) if result.stdout else ""
@@ -73,6 +74,7 @@ def popen(args, **kwargs):
     """subprocess.Popen 包装——管道模式（调用方自己 readline）。"""
     kwargs.pop("text", None)
     kwargs.pop("encoding", None)
+    kwargs.pop("errors", None)
     return subprocess.Popen(args, **kwargs)
 
 
