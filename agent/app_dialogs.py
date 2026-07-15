@@ -1,4 +1,4 @@
-﻿"""Extended dialogs for Calw."""
+"""Extended dialogs for Calw."""
 from __future__ import annotations
 import os, re, threading, time, tkinter as tk, json
 import customtkinter as ctk

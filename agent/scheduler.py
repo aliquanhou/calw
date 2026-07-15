@@ -1,9 +1,10 @@
-﻿"""Task scheduler — cron-like scheduled execution with background thread."""
+"""Task scheduler — cron-like scheduled execution with background thread."""
 from __future__ import annotations
 import re, subprocess, threading, time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
+from ._encoding import run as _run, popen as _popen
 
 _CRON_RE = re.compile(r'^(\*|[0-9,/\-]+)\s+(\*|[0-9,/\-]+)\s+(\*|[0-9,/\-]+)\s+(\*|[0-9,/\-]+)\s+(\*|[0-9,/\-]+)$')
 
@@ -101,7 +102,7 @@ class Scheduler:
                 for t in triggered:
                     ev=ScheduleEvent(task_id=t.id,task_name=t.name,command=t.command,timestamp=time.time())
                     try:
-                        r=subprocess.run(["powershell","-NoProfile","-Command",t.command],capture_output=True,text=True,timeout=120)
+                        r=_run(["powershell","-NoProfile","-Command",t.command],capture_output=True,text=True,timeout=120)
                         ev.result=(r.stdout or "")[:1000]
                         if r.stderr: ev.result+=f"\nSTDERR: {r.stderr[:500]}"
                     except subprocess.TimeoutExpired: ev.result="超时"

@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "calw"
-version = "1.1.0"
+version = "2.1.0"
 description = "Calw AI Agent - 全功能自主 AI 智能体"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -14,6 +14,17 @@ dependencies = [
     "openai>=1.0.0",
     "customtkinter>=5.0.0",
     "pytest>=8.0.0",
+    "chromadb>=0.4.0",
+    "websocket-client>=1.6.0",
+    "playwright>=1.40.0",
+    "pyautogui>=0.9.0",
+    "pygetwindow>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
 ]
 
 [tool.setuptools]
@@ -21,3 +32,7 @@ packages = ["agent", "agent.plugins", "agent.build_patterns"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

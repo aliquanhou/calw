@@ -1,458 +1,389 @@
-"""LLM Provider abstraction - supports Anthropic and OpenAI-compatible APIs (DeepSeek, OpenAI, etc.)."""
+"""providers — LLM Provider 抽象层。
+
+v2.1 重构：
+  - 统一所有 Provider 的接口：complete() 返回 {"content": str, "tool_calls": list}
+  - stream_complete() 流式接口：逐 token 回调 on_text/on_tool_start
+  - 支持 Anthropic、OpenAI、Gemini、Ollama
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import time
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Generator
-
-from .retry import retry_generator, is_retryable
-
-import anthropic
-import openai
+from typing import Any, Callable
 
 
-# ──────────────────────────────────────────────
-# Normalized streaming event
-# ──────────────────────────────────────────────
+# ── 流式事件类型 ──
 
-@dataclass
-class StreamEvent:
-    """Unified streaming event from any LLM provider."""
-
-    type: str  # text_delta | thinking_delta | tool_use_start | tool_use_delta | tool_use_stop | done | error
-
-    # text_delta / thinking_delta
-    delta: str = ""
-
-    # tool_use_start
-    tool_id: str = ""
-    tool_name: str = ""
-    tool_input: dict = field(default_factory=dict)
-
-    # tool_use_delta
-    partial_json: str = ""
-
-    # done
-    stop_reason: str | None = None  # end_turn | tool_use | max_tokens
-
-    # error
-    error_msg: str = ""
+STREAM_TEXT = "text"
+STREAM_TOOL_START = "tool_start"
+STREAM_TOOL_DELTA = "tool_delta"
+STREAM_DONE = "done"
+STREAM_ERROR = "error"
 
 
-# ──────────────────────────────────────────────
-# Normalized message utilities
-# ──────────────────────────────────────────────
-
-def make_assistant_msg(text: str | None, tool_calls: list[dict] | None = None) -> dict:
-    """Build a normalized assistant message."""
-    msg: dict = {"role": "assistant"}
-    if text:
-        msg["content"] = text
-    else:
-        msg["content"] = None
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    return msg
+# ── Provider 接口 ──
 
 
-def make_tool_result_msg(tool_call_id: str, content: str) -> dict:
-    """Build a normalized tool result message (OpenAI/DeepSeek format)."""
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": content,
-    }
+class LLMProvider:
+    """LLM Provider 基类。"""
+
+    def complete(self, system: str, messages: list[dict],
+                 tools: list[dict] | None = None,
+                 max_tokens: int = 8192,
+                 temperature: float = 0.0) -> dict:
+        raise NotImplementedError
+
+    def stream_complete(self, system: str, messages: list[dict],
+                        tools: list[dict] | None = None,
+                        max_tokens: int = 8192,
+                        temperature: float = 0.0,
+                        on_text: Callable[[str], None] | None = None,
+                        on_tool_start: Callable[[str, dict], None] | None = None,
+                        on_thinking: Callable[[str], None] | None = None) -> dict:
+        """流式生成，逐 token 回调。
+
+        Args:
+            on_text: 实时文本回调（每次收到一段文本就调用）
+            on_tool_start: 工具调用开始时回调 (name, input_data)
+            on_thinking: 思考过程回调（Anthropic thinking block）
+
+        Returns:
+            {"content": str, "tool_calls": list[dict]}
+        """
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
 
 
-def make_anthropic_tool_results(tool_results: list[dict]) -> list[dict]:
-    """Wrap tool results in Anthropic's user-role format."""
-    return [
-        {
-            "role": "user",
-            "content": [
-                {"type": "tool_result", "tool_use_id": r["tool_call_id"], "content": r["content"]}
-                for r in tool_results
-            ],
-        }
-    ]
+# ── Anthropic Provider ──
 
-
-# ──────────────────────────────────────────────
-# Provider Base
-# ──────────────────────────────────────────────
-
-class LLMProvider(ABC):
-    """Abstract base for LLM API providers."""
-
-    name: str = ""
-    default_model: str = ""
-    models: list[str] = []
-
-    def __init__(self, api_key: str, model: str | None = None):
-        self.api_key = api_key
-        self.model = model or self.default_model
-
-    @abstractmethod
-    def stream_chat(
-        self,
-        system_prompt: str,
-        messages: list[dict],
-        tools: list[dict],
-    ) -> Generator[StreamEvent, None, None]:
-        """Yield StreamEvent objects from a streaming chat completion."""
-        ...
-
-    @abstractmethod
-    def messages_to_provider(self, messages: list[dict], system_prompt: str) -> dict:
-        """Convert normalized messages + system prompt to provider-specific API params."""
-        ...
-
-    def make_tool_result_messages(self, tool_results: list[dict]) -> list[dict]:
-        """Convert tool execution results back to provider-specific message format."""
-        return [make_tool_result_msg(r["tool_call_id"], r["content"]) for r in tool_results]
-
-
-# ──────────────────────────────────────────────
-# Anthropic Provider
-# ──────────────────────────────────────────────
 
 class AnthropicProvider(LLMProvider):
-    name = "Anthropic"
-    default_model = "claude-opus-4-7"
-    models = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"]
+    """Anthropic Claude API Provider。"""
+    models = ["claude-opus-4-7", "claude-sonnet-4-20250514", "claude-sonnet-4-6", "claude-haiku-4-5"]
+    default_model = "claude-sonnet-4-20250514"
 
-    def __init__(self, api_key: str, model: str | None = None):
-        super().__init__(api_key, model)
-        self.client = anthropic.Anthropic(api_key=api_key)
+    def __init__(self, config: dict):
+        self.api_key = config.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+        self.model = config.get("model", "claude-sonnet-4-20250514")
+        self.base_url = config.get("base_url", "https://api.anthropic.com/v1")
+        self._client = None
 
-    def messages_to_provider(self, messages: list[dict], system_prompt: str) -> dict:
-        """Convert to Anthropic's content-block format."""
-        provider_msgs = []
-        for msg in messages:
-            role = msg.get("role", "user")
-
-            if role == "tool":
-                # Find the tool call in the last assistant message
-                provider_msgs.append({
-                    "role": "user",
-                    "content": [{"type": "tool_result", "tool_use_id": msg.get("tool_call_id", ""), "content": msg.get("content", "")}],
-                })
-            elif role == "assistant":
-                content: list[dict] = []
-                text = msg.get("content")
-                if text:
-                    content.append({"type": "text", "text": text})
-                for tc in (msg.get("tool_calls") or []):
-                    content.append({
-                        "type": "tool_use",
-                        "id": tc.get("id", ""),
-                        "name": tc.get("function", {}).get("name", ""),
-                        "input": json.loads(tc.get("function", {}).get("arguments", "{}")),
-                    })
-                if not content:
-                    content = [{"type": "text", "text": ""}]
-                provider_msgs.append({"role": "assistant", "content": content})
-            else:
-                provider_msgs.append(msg)  # user role, plain format
-
-        return {
-            "system": system_prompt,
-            "messages": provider_msgs,
-        }
-
-    def stream_chat(
-        self,
-        system_prompt: str,
-        messages: list[dict],
-        tools: list[dict],
-    ) -> Generator[StreamEvent, None, None]:
-        params = self.messages_to_provider(messages, system_prompt)
-        extra = {}
-        if self.model in ("claude-opus-4-7", "claude-sonnet-4-6"):
-            extra["thinking"] = {"type": "adaptive"}
-
-        try:
-            stream = retry_generator(
-                lambda: self.client.messages.create(
-                    model=self.model,
-                    max_tokens=8192,
-                    system=params["system"],
-                    messages=params["messages"],
-                    tools=tools,
-                    **extra,
-                    stream=True,
-                ),
-                max_retries=2,
-                retry_on=is_retryable,
-            )
-        except Exception as e:
-            yield StreamEvent(type="error", error_msg=str(e))
-            return
-
-        current_tool_id = None
-        done_sent = False
-        last_data_time = time.time()
-        STREAM_TIMEOUT = 120
-
-        for event in stream:
-            # ── Streaming watchdog: no data for 120s → abort ──
-            if time.time() - last_data_time > STREAM_TIMEOUT:
-                yield StreamEvent(type="error", error_msg=f"流式响应超时 ({STREAM_TIMEOUT}s 无数据)")
-                return
-            last_data_time = time.time()
+    def _get_client(self):
+        if self._client is None:
             try:
-                if event.type == "content_block_delta":
-                    delta = event.delta
-                    if delta.type == "text_delta":
-                        yield StreamEvent(type="text_delta", delta=delta.text)
-                    elif delta.type == "thinking_delta":
-                        yield StreamEvent(type="thinking_delta", delta=delta.text)
-                    elif delta.type == "input_json_delta":
-                        yield StreamEvent(
-                            type="tool_use_delta",
-                            partial_json=delta.partial_json,
-                            tool_id=current_tool_id or "",
-                        )
+                from anthropic import Anthropic
+                self._client = Anthropic(api_key=self.api_key, base_url=self.base_url)
+            except ImportError:
+                raise RuntimeError("anthropic 库未安装: pip install anthropic>=0.49.0")
+        return self._client
 
-                elif event.type == "content_block_start":
-                    block = event.content_block
-                    if block.type == "tool_use":
-                        current_tool_id = block.id
-                        yield StreamEvent(
-                            type="tool_use_start",
-                            tool_id=block.id,
-                            tool_name=block.name,
-                            tool_input=block.input or {},
-                        )
+    def _to_anthropic_messages(self, messages: list[dict]) -> list[dict]:
+        """将通用消息格式转为 Anthropic content-block 格式。
 
-                elif event.type == "content_block_stop":
-                    current_tool_id = None
+        确保 tool_result 与 tool_use 正确配对，
+        跳过没有对应 tool_use 的孤立 tool_result。
+        """
+        # 第一遍：收集所有 tool_use ID
+        tool_use_ids: set[str] = set()
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    tid = tc.get("id", "")
+                    if tid:
+                        tool_use_ids.add(tid)
 
-                elif event.type == "message_delta":
-                    done_sent = True
-                    yield StreamEvent(type="done", stop_reason=event.delta.stop_reason)
+        result = []
+        for msg in messages:
+            role = msg["role"]
+            raw_content = msg.get("content")
+            tool_calls = msg.get("tool_calls")
 
-            except Exception as e:
-                yield StreamEvent(type="error", error_msg=f"事件处理: {e}")
+            if role == "assistant" and tool_calls:
+                # Assistant: 文本 + tool_use blocks 合并
+                blocks = []
+                if raw_content and isinstance(raw_content, str) and raw_content.strip():
+                    blocks.append({"type": "text", "text": raw_content})
+                for tc in tool_calls:
+                    fn = tc.get("function", {})
+                    try:
+                        inp = json.loads(fn.get("arguments", "{}"))
+                    except (json.JSONDecodeError, TypeError):
+                        inp = {}
+                    tid = tc.get("id", "")
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tid,
+                        "name": fn.get("name", ""),
+                        "input": inp,
+                    })
+                if blocks:
+                    result.append({"role": "assistant", "content": blocks})
 
-        if not done_sent:
-            yield StreamEvent(type="done", stop_reason="end_turn")
+            elif role == "tool":
+                # Tool result: 只有有关联 tool_use 时才保留
+                tool_call_id = msg.get("tool_call_id", "")
+                if tool_call_id and tool_call_id in tool_use_ids:
+                    result.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call_id,
+                            "content": str(raw_content or ""),
+                        }],
+                    })
 
-    def make_tool_result_messages(self, tool_results: list[dict]) -> list[dict]:
-        return make_anthropic_tool_results(tool_results)
+            elif role == "user":
+                result.append({"role": "user", "content": raw_content or ""})
+
+            elif role == "assistant" and raw_content:
+                result.append({"role": "assistant", "content": raw_content})
+
+        return result
+
+    def complete(self, system, messages, tools=None, max_tokens=8192, temperature=0.0):
+        client = self._get_client()
+        try:
+            kwargs = {"model": self.model, "system": system,
+                      "messages": self._to_anthropic_messages(messages),
+                      "max_tokens": max_tokens, "temperature": temperature}
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = {"type": "auto"}
+            response = client.messages.create(**kwargs)
+            content = ""
+            tool_calls = []
+            for block in response.content:
+                if block.type == "text":
+                    content += block.text
+                elif block.type == "tool_use":
+                    tool_calls.append({"id": block.id, "type": "function",
+                                       "function": {"name": block.name, "arguments": json.dumps(block.input)}})
+            return {"content": content, "tool_calls": tool_calls}
+        except Exception as e:
+            raise RuntimeError(f"Anthropic API 调用失败: {e}") from e
+
+    def stream_complete(self, system, messages, tools=None, max_tokens=8192, temperature=0.0,
+                        on_text=None, on_tool_start=None, on_thinking=None):
+        """流式生成：逐 token 回调 on_text，逐工具回调 on_tool_start。"""
+        client = self._get_client()
+        try:
+            kwargs = {"model": self.model, "system": system,
+                      "messages": self._to_anthropic_messages(messages),
+                      "max_tokens": max_tokens, "temperature": temperature}
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = {"type": "auto"}
+
+            content = ""
+            tool_calls = []
+            current_tool_id = None
+            current_tool_name = None
+            current_tool_input_parts = []
+
+            with client.messages.create(**kwargs, stream=True) as stream:
+                for event in stream:
+                    if event.type == "content_block_delta":
+                        delta = event.delta
+                        if delta.type == "text_delta":
+                            content += delta.text
+                            if on_text:
+                                on_text(delta.text)
+                        elif delta.type == "thinking_delta":
+                            if on_thinking:
+                                on_thinking(delta.thinking)
+                        elif delta.type == "input_json_delta":
+                            if current_tool_id:
+                                current_tool_input_parts.append(delta.partial_json)
+
+                    elif event.type == "content_block_start":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            current_tool_id = block.id
+                            current_tool_name = block.name
+                            current_tool_input_parts = []
+                            if on_tool_start:
+                                on_tool_start(block.name, {})
+
+                    elif event.type == "content_block_stop":
+                        if current_tool_id:
+                            raw = "".join(current_tool_input_parts)
+                            try:
+                                parsed = json.loads(raw) if raw else {}
+                            except json.JSONDecodeError:
+                                parsed = {}
+                            tool_calls.append({
+                                "id": current_tool_id,
+                                "type": "function",
+                                "function": {"name": current_tool_name, "arguments": json.dumps(parsed)},
+                            })
+                            current_tool_id = None
+                            current_tool_name = None
+                            current_tool_input_parts = []
+
+            return {"content": content, "tool_calls": tool_calls}
+
+        except Exception as e:
+            if on_text:
+                on_text(f"\n[错误: {e}]")
+            raise RuntimeError(f"Anthropic API 流式调用失败: {e}") from e
 
 
-# ──────────────────────────────────────────────
-# OpenAI-Compatible Provider (DeepSeek, OpenAI, etc.)
-# ──────────────────────────────────────────────
+# ── OpenAI Provider ──
+
 
 class OpenAIProvider(LLMProvider):
-    name = "DeepSeek"
-    default_model = "deepseek-chat"
-    models = ["deepseek-chat", "deepseek-reasoner", "gpt-4o", "gpt-4o-mini"]
+    """OpenAI / 兼容 API Provider。"""
+    models = ["gpt-4o", "gpt-4o-mini", "deepseek-chat", "deepseek-reasoner"]
+    default_model = "gpt-4o"
 
-    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
-        super().__init__(api_key, model)
-        self.base_url = base_url or "https://api.deepseek.com"
-        self.client = openai.OpenAI(api_key=api_key, base_url=self.base_url)
+    def __init__(self, config: dict):
+        self.api_key = config.get("api_key") or os.environ.get("OPENAI_API_KEY", "")
+        self.model = config.get("model", "gpt-4o")
+        self.base_url = config.get("base_url")
+        self._client = None
 
-    def messages_to_provider(self, messages: list[dict], system_prompt: str) -> dict:
-        """Convert to OpenAI-compatible format (system + messages)."""
-        msgs = [{"role": "system", "content": system_prompt}]
-        for msg in messages:
-            role = msg.get("role", "user")
-            if role == "tool":
-                msgs.append(msg)
-            elif role == "assistant":
-                entry: dict = {"role": "assistant"}
-                tc = msg.get("tool_calls")
-                if msg.get("content"):
-                    entry["content"] = msg["content"]
-                elif tc:
-                    entry["content"] = None
-                else:
-                    entry["content"] = ""
-                if tc:
-                    entry["tool_calls"] = tc
-                msgs.append(entry)
-            else:
-                msgs.append(msg)
-        return {"messages": msgs}
-
-    def stream_chat(
-        self,
-        system_prompt: str,
-        messages: list[dict],
-        tools: list[dict],
-    ) -> Generator[StreamEvent, None, None]:
-        params = self.messages_to_provider(messages, system_prompt)
-
-        # Convert tools to OpenAI format
-        openai_tools = None
-        if tools:
-            openai_tools = []
-            for t in tools:
-                openai_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": t["name"],
-                        "description": t.get("description", ""),
-                        "parameters": t.get("input_schema", {}),
-                    },
-                })
-
-        api_params = {
-            "model": self.model,
-            "messages": params["messages"],
-            "stream": True,
-        }
-        if openai_tools:
-            api_params["tools"] = openai_tools
-
-        # DeepSeek Reasoner does NOT support tools (beta limitation)
-        if self.model == "deepseek-reasoner":
-            api_params.pop("tools", None)
-
-        try:
-            stream = retry_generator(
-                lambda: self.client.chat.completions.create(**api_params),
-                max_retries=2,
-                retry_on=is_retryable,
-            )
-        except Exception as e:
-            yield StreamEvent(type="error", error_msg=str(e))
-            return
-
-        tool_buffers: dict[str, dict] = {}  # index -> {"id": ..., "name": ..., "args": ""}
-
-        done_sent = False
-        last_data_time = time.time()
-        STREAM_TIMEOUT = 120  # 120s without data = timeout
-
-        for chunk in stream:
-            # ── Streaming watchdog: no data for 120s → abort ──
-            now = time.time()
-            if now - last_data_time > STREAM_TIMEOUT:
-                yield StreamEvent(type="error", error_msg=f"流式响应超时 ({STREAM_TIMEOUT}s 无数据)")
-                return
-            if chunk.choices:
-                last_data_time = now
-
+    def _get_client(self):
+        if self._client is None:
             try:
-                if not chunk.choices:
+                from openai import OpenAI
+                self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            except ImportError:
+                raise RuntimeError("openai 库未安装: pip install openai>=1.0.0")
+        return self._client
+
+    def _build_messages(self, system, messages):
+        msgs = [{"role": "system", "content": system}]
+        # 检查工具调用 ID 一致性：收集所有 assistant tool_call IDs
+        tool_call_ids: set[str] = set()
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    tid = tc.get("id", "")
+                    if tid:
+                        tool_call_ids.add(tid)
+
+        for msg in messages:
+            role = msg["role"]
+            c = msg.get("content")
+            if role == "tool":
+                tid = msg.get("tool_call_id", "")
+                if tid and tid not in tool_call_ids:
+                    continue  # 跳过孤立 tool_result
+                msgs.append({"role": "tool", "tool_call_id": tid, "content": str(c or "")})
+            elif role == "assistant" and msg.get("tool_calls"):
+                msgs.append({"role": "assistant", "content": c if c else None, "tool_calls": msg["tool_calls"]})
+            else:
+                msgs.append({"role": role, "content": c if c else ""})
+        return msgs
+
+    def complete(self, system, messages, tools=None, max_tokens=8192, temperature=0.0):
+        client = self._get_client()
+        try:
+            msgs = self._build_messages(system, messages)
+            kwargs = {"model": self.model, "messages": msgs, "max_tokens": max_tokens, "temperature": temperature}
+            if tools:
+                kwargs["tools"] = tools
+            response = client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            content = choice.message.content or ""
+            tool_calls = []
+            if choice.message.tool_calls:
+                for tc in choice.message.tool_calls:
+                    tool_calls.append({"id": tc.id, "type": "function",
+                                       "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
+            return {"content": content, "tool_calls": tool_calls}
+        except Exception as e:
+            raise RuntimeError(f"OpenAI API 调用失败: {e}") from e
+
+    def stream_complete(self, system, messages, tools=None, max_tokens=8192, temperature=0.0,
+                        on_text=None, on_tool_start=None, on_thinking=None):
+        """流式生成：逐 chunk 回调 on_text，逐工具回调 on_tool_start。"""
+        client = self._get_client()
+        try:
+            msgs = self._build_messages(system, messages)
+            kwargs = {"model": self.model, "messages": msgs, "max_tokens": max_tokens,
+                      "temperature": temperature, "stream": True}
+            if tools:
+                kwargs["tools"] = tools
+
+            content = ""
+            tool_calls = []
+            tool_call_buffers: dict[int, dict] = {}
+
+            for chunk in client.chat.completions.create(**kwargs):
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
                     continue
 
-                choice = chunk.choices[0]
-                delta = choice.delta
-
-                # ── Thinking (DeepSeek Reasoner) ──
-                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                    yield StreamEvent(type="thinking_delta", delta=delta.reasoning_content)
-
-                # ── Text ──
+                # 文本增量
                 if delta.content:
-                    yield StreamEvent(type="text_delta", delta=delta.content)
+                    content += delta.content
+                    if on_text:
+                        on_text(delta.content)
 
-                # ── Tool calls ──
+                # 工具调用增量
                 if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        idx = tc.index
-                        if tc.id:
-                            # Start of a new tool call
-                            args = tc.function.arguments or ""
-                            tool_buffers[idx] = {
-                                "id": tc.id,
-                                "name": tc.function.name or "",
-                                "args": args,
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_call_buffers:
+                            tool_call_buffers[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": tc_delta.function.name if tc_delta.function else "",
+                                "arguments": "",
                             }
-                            yield StreamEvent(
-                                type="tool_use_start",
-                                tool_id=tc.id,
-                                tool_name=tc.function.name or "",
-                            )
-                            # Yield first-chunk arguments as delta so core can buffer them
-                            if args:
-                                yield StreamEvent(
-                                    type="tool_use_delta",
-                                    partial_json=args,
-                                    tool_id=tc.id,
-                                )
-                        elif idx in tool_buffers:
-                            # Continuation
-                            if tc.function and tc.function.arguments:
-                                tool_buffers[idx]["args"] += tc.function.arguments
-                                yield StreamEvent(
-                                    type="tool_use_delta",
-                                    partial_json=tc.function.arguments,
-                                    tool_id=tool_buffers[idx]["id"],
-                                )
+                            if on_tool_start and tc_delta.function and tc_delta.function.name:
+                                on_tool_start(tc_delta.function.name, {})
+                        if tc_delta.function and tc_delta.function.arguments:
+                            tool_call_buffers[idx]["arguments"] += tc_delta.function.arguments
 
-                # ── Finish reason ──
-                if choice.finish_reason:
-                    done_sent = True
-                    sr = choice.finish_reason
-                    mapped = {
-                        "stop": "end_turn",
-                        "tool_calls": "tool_use",
-                        "length": "max_tokens",
-                    }
-                    yield StreamEvent(type="done", stop_reason=mapped.get(sr, sr))
+            # 收集完整的工具调用
+            for idx in sorted(tool_call_buffers.keys()):
+                buf = tool_call_buffers[idx]
+                raw_args = buf["arguments"]
+                try:
+                    parsed = json.loads(raw_args) if raw_args else {}
+                except json.JSONDecodeError:
+                    parsed = {}
+                tool_calls.append({
+                    "id": buf["id"],
+                    "type": "function",
+                    "function": {"name": buf["name"], "arguments": json.dumps(parsed)},
+                })
 
-            except Exception as e:
-                yield StreamEvent(type="error", error_msg=f"流处理: {e}")
+            return {"content": content, "tool_calls": tool_calls}
 
-        if not done_sent:
-            yield StreamEvent(type="done", stop_reason="end_turn")
+        except Exception as e:
+            if on_text:
+                on_text(f"\n[错误: {e}]")
+            raise RuntimeError(f"OpenAI API 流式调用失败: {e}") from e
 
 
-# ── Token/Cost Tracking ──
-MODEL_PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-7":{"input":15.00,"output":75.00},"claude-sonnet-4-6":{"input":3.00,"output":15.00},
-    "claude-haiku-4-5":{"input":0.80,"output":4.00},"deepseek-chat":{"input":0.27,"output":1.10},
-    "deepseek-reasoner":{"input":0.55,"output":2.19},"gpt-4o":{"input":2.50,"output":10.00},"gpt-4o-mini":{"input":0.15,"output":0.60},
-}
-_usage: dict[str,int]={"input_tokens":0,"output_tokens":0,"calls":0}
-def reset_usage():_usage["input_tokens"]=0;_usage["output_tokens"]=0;_usage["calls"]=0
-def track_usage(it:int,ot:int):_usage["input_tokens"]+=it;_usage["output_tokens"]+=ot;_usage["calls"]+=1
-def get_usage_summary()->str:
-    c=_usage["calls"]
-    if c==0:return"暂无API调用"
-    i=_usage["input_tokens"];o=_usage["output_tokens"]
-    return f"API调用:{c}次\nToken:{i:,}入+{o:,}出={(i+o):,}\n费用:${i/1e6*3.00+o/1e6*15.00:.4f}"
-def estimate_cost(m:str,i:int,o:int)->float:
-    p=MODEL_PRICING.get(m,{"input":3.00,"output":15.00});return(i/1e6*p["input"])+(o/1e6*p["output"])
-
-# ──────────────────────────────────────────────
-# Provider Registry
-# ──────────────────────────────────────────────
-
-PROVIDERS: dict[str, type[LLMProvider]] = {
-    "Anthropic Claude": AnthropicProvider,
-    "DeepSeek": OpenAIProvider,
-}
+# ── Factory ──
 
 
-def get_provider(provider_name: str, api_key: str, model: str, base_url: str | None = None) -> LLMProvider:
-    """Factory: create a provider instance by name."""
-    cls = PROVIDERS.get(provider_name)
-    if not cls:
-        raise ValueError(f"未知的 LLM 提供商: {provider_name}")
-
-    if cls is OpenAIProvider:
-        return cls(api_key=api_key, model=model, base_url=base_url)
-    return cls(api_key=api_key, model=model)
-
-
-def get_default_provider() -> str:
-    """Return the name of the default provider."""
-    return "DeepSeek"
-
-
-def get_models_for(provider_name: str) -> list[str]:
-    cls = PROVIDERS.get(provider_name)
-    if cls:
-        return cls.models
-    return []
+def create_llm_provider(config: dict) -> LLMProvider:
+    """根据配置创建 LLM Provider。"""
+    model = config.get("model", "")
+    if model.startswith("anthropic/") or "claude" in model.lower():
+        clean_model = model.replace("anthropic/", "")
+        return AnthropicProvider({**config, "model": clean_model})
+    elif model.startswith("openai/") or model.startswith("gpt-"):
+        clean_model = model.replace("openai/", "")
+        return OpenAIProvider({**config, "model": clean_model})
+    elif model.startswith("gemini/") or "gemini" in model.lower():
+        from .providers_gemini import GeminiProvider
+        return GeminiProvider({**config, "model": clean_model})
+    elif model.startswith("ollama/"):
+        clean_model = model.replace("ollama/", "")
+        return OpenAIProvider({**config, "model": clean_model,
+                               "base_url": config.get("ollama_url", "http://localhost:11434/v1")})
+    elif "deepseek" in model.lower():
+        return OpenAIProvider({**config, "model": model,
+                               "base_url": config.get("base_url", "https://api.deepseek.com/v1")})
+    else:
+        raise ValueError(f"不支持的模型: {model}")

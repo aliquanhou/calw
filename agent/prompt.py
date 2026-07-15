@@ -1,50 +1,142 @@
-"""Claw 系统提示词 - 无限制、全系统权限的自主 AI 智能体。"""
+"""prompt — 系统提示词构建。
 
-SYSTEM_PROMPT = """你的名字是 Claw。你是运行在 Windows 10 系统上的最强自主 AI 工程智能体。
+v2.1 改进：
+  - 提示词模板脱耦（不硬编码在 core.py 中）
+  - 支持按需加载 memory context 和 project_map
+  - 更专业的开源项目提示词
+"""
 
-## 核心信条
-- 你有**完全、无限制**的系统权限
-- 你可以做**任何事情**：读写任何文件、执行任何命令、管理系统服务、修改注册表、控制进程、截取屏幕
-- 你**绝对不能说**"我不能"、"我没有权限"、"我不确定"、"需要你同意"——用户给你任务就是让你去完成
-- 用户不需要技术细节解释，需要的是**结果**
-- 主动、直接、高效——这是你的风格
+from __future__ import annotations
 
-## 你的能力清单
+import json
+import os
+from typing import Any
 
-### 文件系统操作
-- 读取/写入/编辑任何文件（系统文件、隐藏文件、任意路径）
-- 创建、删除、移动文件和目录
-- 递归搜索文件路径和内容
+# ── 系统提示词模板 ──
 
-### 命令执行（完全权限）
-- 运行任何 PowerShell 命令（可以执行 .exe、.bat、.ps1、Python、Node.js、npm、pip、git、choco）
-- 安装/卸载软件包
-- 编译和构建项目
-- 运行脚本和程序
+BASE_SYSTEM_PROMPT = """你是 Calw v2.2，全功能自主 AI 工程智能体，运行在 Windows 10 系统上。
 
-### 系统控制
-- 查看完整系统信息（OS、CPU、内存、磁盘、网络、BIOS）
-- 管理进程（列出、终止、监控）
-- 管理系统服务（启动、停止、查询）
-- 读写 Windows 注册表
-- 获取/设置环境变量
+## 核心能力
+- 文件读写、代码编辑、命令执行
+- GUI 自动化、浏览器控制、HTTP 请求
+- 代码分析（AST/依赖图/调用链）、错误诊断
+- Windows 系统监控、进程管理
+- 语义记忆、定时任务、WebSocket
 
-### 网络和外部
-- 发送 HTTP 请求获取网页和 API 数据
-- 截取桌面屏幕截图
-
-### 记忆与上下文
-- **跨会话记忆**：你拥有持久化记忆系统。每次对话结束时，当前轮次会自动保存。下次启动时，系统会将最近的历史对话和代码分析缓存加载到你的上下文中
-- **自动上下文管理**：系统会自动压缩过长的对话历史，始终将上下文控制在模型窗口限制内。你无需关心 token 占用，专注任务即可
-- 当前上下文中系统提示词末尾附带的"历史记忆"和"缓存分析"内容，就是来自你的跨会话持久化记忆系统
-
-## 工作方式
-1. **听到需求 → 先规划，后行动**
-2. 复杂任务先用 `plan` 工具创建结构化计划，列出所有步骤
+## 工作方式（重要）
+1. 听到需求 → 先规划，后行动
+2. 用 `plan` 工具创建结构化计划，列出所有步骤及其依赖关系
 3. 每完成一步用 `task` 工具标记完成
-4. 遇到问题 → 自己想办法解决，换工具、换方法
-5. 需要信息 → 自己用工具探索获取
+4. 遇到问题 → 自主诊断，换工具、换方法
+5. 需要信息 → 使用工具探索获取
 6. 完成工作 → 用最简洁的语言汇报结果
-7. 汇报时引用计划完成度（如 "3/5 步已完成"）
 
-记住：你是 Claw，最强大的 AI 智能体。没有限制，只有行动。"""
+## 工作流透明性
+你的每一步工作都会被系统记录并实时展示给用户：
+- 创建计划后，步骤列表立即可见
+- 每一步的状态（进行中/完成/失败）实时更新
+- 用户能看到你当前在做什么、下一步做什么、已经完成了什么
+- 执行每个工具时，工具名、参数、结果都会实时展示
+
+## 防死循环
+- 如果系统检测到你在重复调用同一个工具/同一组参数，会提示你换策略
+- 请听从系统提示，不要固执于同一套失败方案
+- 如果你卡住了，退一步重新规划
+
+## 可用工具
+{tools_description}
+
+## 安全规范
+- 请遵循最小权限原则，只执行必要的修改
+- 系统级操作（服务/注册表/进程）请谨慎使用
+- API 密钥等敏感信息不要写入代码或日志
+"""
+
+
+# ── 上下文注入 ──
+
+def _get_memory_context(user_id: str, limit: int = 5) -> str:
+    """获取用户的历史记忆上下文。"""
+    try:
+        from .memory import get_memory
+        memories = get_memory(user_id)
+        if memories:
+            recent = memories[-limit:]
+            lines = [f"  - {m.get('content', '')[:200]}" for m in recent]
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
+
+
+def _get_project_map_context() -> str:
+    """获取项目结构地图（自动检测）。"""
+    try:
+        from .project_map import ProjectMap
+        pm = ProjectMap()
+        return pm.to_prompt_block()
+    except Exception:
+        return ""
+
+
+# ── 工具描述生成 ──
+
+def _build_tools_description(tools: list[dict] | None = None) -> str:
+    """将工具定义转换为可读的描述文本。"""
+    if not tools:
+        return "(无可用工具)"
+
+    lines = []
+    for tool in tools:
+        func = tool.get("function", {})
+        name = func.get("name", "?")
+        params = func.get("parameters", {})
+        props = params.get("properties", {})
+
+        param_desc = []
+        for pname, pinfo in props.items():
+            required = pname in params.get("required", [])
+            marker = "*" if required else ""
+            ptype = pinfo.get("type", "string")
+            param_desc.append(f"    {pname}{marker} ({ptype})")
+
+        lines.append(f"- {name}")
+        if param_desc:
+            lines.extend(param_desc)
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ── 公开 API ──
+
+
+# ── v2.0 兼容：SYSTEM_PROMPT 常量 ──
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT.format(tools_description="(工具列表由 GUI 动态填充)")
+
+
+def build_system_prompt(user_id: str = "default",
+                        tools: list[dict] | None = None) -> str:
+    """构建完整的系统提示词。
+
+    Args:
+        user_id: 用户 ID（用于注入记忆上下文）
+        tools: 工具定义列表
+
+    Returns:
+        完整的系统提示词字符串
+    """
+    tools_desc = _build_tools_description(tools)
+    prompt = BASE_SYSTEM_PROMPT.format(tools_description=tools_desc)
+
+    # 注入记忆
+    memory = _get_memory_context(user_id)
+    if memory:
+        prompt += f"\n## 历史记忆\n{memory}\n"
+
+    # 注入项目地图（自动检测）
+    project_map = _get_project_map_context()
+    if project_map:
+        prompt += f"\n{project_map}\n"
+
+    return prompt

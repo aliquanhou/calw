@@ -1,8 +1,44 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+dist/
+build/
 
-# Secrets
-config.json
+# 数据
+data/
+*.jsonl
+
+# 环境
 .env
-*.key
+*.local
+
+# 项目配置
+.claude/
+config.json
+.github/workflows/
+
+# 本地备份/对比文件（非仓库内容）
+agent/app_original.py
+agent/core_v20.py
+_test_gui.py
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 构建输出
+*.exe
+*.spec
+
+# 临时/调试文件
+fix_*.py
+_temp_*.txt
+_temp_*.json
+page.html
+agent/sdk_messages.py

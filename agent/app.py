@@ -17,11 +17,11 @@ from .prompt import SYSTEM_PROMPT
 from .providers import (
     AnthropicProvider,
     OpenAIProvider,
-    get_provider,
-    get_default_provider,
 )
 from .scheduler import get_scheduler
 from .watcher import get_watcher
+from .transcript import Transcript
+from .workflow import Workflow
 from .app_dialogs import CodeReviewDialog, ResearchDialog, SchedulerDialog, WatcherDialog
 
 
@@ -89,6 +89,28 @@ PROVIDER_PRESETS = {
 }
 
 PROVIDER_NAMES = list(PROVIDER_PRESETS.keys())
+
+# ── v2.0 兼容：get_default_provider / get_provider 内联 ──
+
+def _get_default_provider() -> str:
+    return PROVIDER_NAMES[0] if PROVIDER_NAMES else "OpenAI"
+
+def _get_provider(provider_name: str, api_key: str, model: str, base_url: str | None = None) -> OpenAIProvider | AnthropicProvider:
+    if provider_name == "Anthropic Claude":
+        return AnthropicProvider({
+            "api_key": api_key,
+            "model": model or "claude-sonnet-4-20250514",
+            "base_url": base_url or "",
+        })
+    else:
+        return OpenAIProvider({
+            "api_key": api_key,
+            "model": model or "gpt-4o",
+            "base_url": base_url or PROVIDER_PRESETS.get(provider_name, {}).get("base_url", ""),
+        })
+
+get_default_provider = _get_default_provider
+get_provider = _get_provider
 
 
 # ── UI Stream Handler ──
@@ -242,10 +264,17 @@ class AgentApp(ctk.CTk):
         self.busy = False
         self.ui_queue: queue.Queue = queue.Queue()
 
+        # 透明工作流
+        self.transcript: Transcript | None = None
+        self.workflow: Workflow | None = None
+        self._mcp_servers: list = []
+
         # Tool tracking
         self.tool_status: dict[str, str] = {t: "idle" for t in TOOL_ICONS}
         self.tool_activity: list[dict] = []
         self._active_tool: str | None = None
+        self._active_tool_input: dict = {}  # 保存工具调用时的参数，用于结果展示
+        self._active_tool_start: float = 0.0
         self._tool_start_time: float = 0.0
         self._last_output_time: float = time.time()
         self._watchdog_armed: bool = False
@@ -256,8 +285,11 @@ class AgentApp(ctk.CTk):
         self._turn_total: int = 0
         self._turn_done: int = 0
         self._chat_needs_scroll: bool = False
+        self._think_buffer: str = ""
+        self._think_header_shown: bool = False
 
         self._build_ui()
+        self._load_config()
         self._load_config()
         self._poll_queue()
         self.entry.focus()
@@ -267,15 +299,18 @@ class AgentApp(ctk.CTk):
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1, minsize=500)
         self.grid_columnconfigure(1, weight=0)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         # ══ Mission Control Dashboard ══
         self._build_dashboard()
 
+        # ══ Workflow Status Bar ══
+        self._build_workflow_bar()
+
         # ══ Main: Chat + Tool Panel ══
         # Chat
         chat_frame = ctk.CTkFrame(self)
-        chat_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 2), pady=5)
+        chat_frame.grid(row=2, column=0, sticky="nsew", padx=(10, 2), pady=5)
         chat_frame.grid_columnconfigure(0, weight=1)
         chat_frame.grid_rowconfigure(0, weight=1)
 
@@ -296,10 +331,16 @@ class AgentApp(ctk.CTk):
             ("asst", COLOR_ASSISTANT, (FONT_MONO, 13)),
             ("think", COLOR_THINKING, (FONT_MONO, 12)),
             ("tool", COLOR_TOOL_NAME, (FONT_MONO, 12, "bold")),
+            ("tool_path", "#64B5F6", (FONT_MONO, 12)),
             ("tool_r", COLOR_TOOL_RESULT, (FONT_MONO, 12)),
+            ("tool_meta", "#888", (FONT_MONO, 11)),
+            ("code", "#82AAFF", (FONT_MONO, 12)),
+            ("code_block", "#A8D8EA", (FONT_MONO, 12)),
             ("err", COLOR_ERROR, (FONT_MONO, 12, "bold")),
             ("sys", COLOR_SYSTEM, (FONT_FAMILY, 12)),
             ("sep", COLOR_SEPARATOR, (FONT_MONO, 8)),
+            ("dim", "#666", (FONT_MONO, 11)),
+            ("num", "#F78C6C", (FONT_MONO, 12)),
         ]:
             self.chat.tag_config(tag, foreground=color, font=font)
 
@@ -319,7 +360,7 @@ class AgentApp(ctk.CTk):
 
         # ══ Quick Action Buttons + Input Area ══
         inp = ctk.CTkFrame(self, corner_radius=0)
-        inp.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
+        inp.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 8))
         inp.grid_columnconfigure(0, weight=1)
 
         # Action button bar (above input)
@@ -330,8 +371,8 @@ class AgentApp(ctk.CTk):
         action_defs = [
             ("⏹", "终止", "Ctrl+Enter", self._stop_agent, "#F44336"),
             ("🔄", "重试", "Ctrl+R", self._retry_last, "#FF9800"),
-            ("📸", "截屏", "Ctrl+Shift+S", self._quick_screenshot, "#AB47BC"),
-            ("📊", "上下文", "Ctrl+I", self._show_context_detail, "#42A5F5"),
+            ("📋", "复制日志", "", self._copy_chat, "#42A5F5"),
+            ("📊", "上下文", "Ctrl+I", self._show_context_detail, "#AB47BC"),
         ]
         self._action_btns = {}
         for i, (icon, label, shortcut, cmd, color) in enumerate(action_defs):
@@ -366,7 +407,7 @@ class AgentApp(ctk.CTk):
         # ══ Status Bar ══
         self.status_bar = ctk.CTkLabel(self, text="Ready — configure API in Settings",
                                        anchor="w", font=(FONT_FAMILY, 11), text_color="#888")
-        self.status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 4))
+        self.status_bar.grid(row=4, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 4))
 
     def _build_dashboard(self):
         """Build the Mission Control dashboard header."""
@@ -456,10 +497,76 @@ class AgentApp(ctk.CTk):
         self.ctx_progress.grid(row=1, column=0, columnspan=6, sticky="ew")
         self.ctx_progress.set(0)
 
+    def _build_workflow_bar(self):
+        """透明工作流状态栏 —— 显示当前步骤、进度、下一步。"""
+        wf = ctk.CTkFrame(self, height=26, corner_radius=0, fg_color="#15152a")
+        wf.grid(row=1, column=0, columnspan=2, sticky="ew")
+        wf.grid_propagate(False)
+        wf.grid_columnconfigure(1, weight=1)
+
+        # 步骤状态文本
+        self.wf_label = ctk.CTkLabel(wf, text="⏳ 等待任务...", font=(FONT_FAMILY, 11),
+                                      text_color="#888", anchor="w")
+        self.wf_label.grid(row=0, column=0, padx=(14, 4), pady=2, sticky="w")
+
+        # 进度条（细线）
+        self.wf_progress = ctk.CTkProgressBar(wf, height=3, corner_radius=0,
+                                               fg_color="#222", progress_color="#FF9800")
+        self.wf_progress.grid(row=0, column=1, sticky="ew", padx=4, pady=2)
+        self.wf_progress.set(0)
+
+        # 步骤计数
+        self.wf_count = ctk.CTkLabel(wf, text="0/0", font=(FONT_MONO, 10),
+                                      text_color="#555", anchor="e")
+        self.wf_count.grid(row=0, column=2, padx=(4, 14), pady=2, sticky="e")
+
+    def _update_workflow_display(self):
+        """从 Agent 的工作流同步 UI 显示。"""
+        if not self.agent or not self.agent.workflow:
+            self.wf_label.configure(text="⏳ 等待任务...")
+            self.wf_progress.set(0)
+            self.wf_count.configure(text="0/0")
+            return
+
+        wf = self.agent.workflow
+        if wf.status == "idle" or not wf.steps:
+            self.wf_label.configure(text="⏳ 等待任务...")
+            self.wf_progress.set(0)
+            self.wf_count.configure(text="0/0")
+            return
+
+        prog = wf.progress()
+        done = sum(1 for s in wf.steps.values() if s.status == "done")
+        total = len(wf.steps)
+        status_icon = "▶" if wf.status == "running" else "✅" if wf.status == "done" else "⏹"
+        color = "#FFC107" if wf.status == "running" else "#4CAF50" if wf.status == "done" else "#888"
+
+        current = wf.get_current_step()
+        next_step = wf.get_next_step_name()
+        current_name = current.name if current else ""
+
+        parts = []
+        if current_name:
+            parts.append(f"▶ {current_name}")
+        if next_step:
+            parts.append(f"→ {next_step}")
+        status_text = " | ".join(parts) if parts else wf.plan_title or "执行中"
+
+        self.wf_label.configure(text=f"{status_icon} {status_text}", text_color=color)
+        self.wf_progress.configure(progress_color="#FF9800" if wf.status == "running" else "#4CAF50")
+        self.wf_progress.set(prog)
+        self.wf_count.configure(text=f"{done}/{total}")
+
+    def _poll_workflow(self):
+        """定时轮询工作流状态（由 _poll_queue 驱动）。"""
+        self._update_workflow_display()
+        if self.busy:
+            self.after(500, self._poll_workflow)
+
     def _build_tool_panel(self):
         """Build the right-side tool panel with tabbed layout (工具 | 日志)."""
         panel = ctk.CTkFrame(self, width=290, corner_radius=8)
-        panel.grid(row=1, column=1, sticky="nsew", padx=(2, 10), pady=5)
+        panel.grid(row=2, column=1, sticky="nsew", padx=(2, 10), pady=5)
         panel.grid_propagate(False)
         panel.grid_rowconfigure(2, weight=1)  # tabview
 
@@ -629,6 +736,8 @@ class AgentApp(ctk.CTk):
                 self.api_key = d.get("api_key", "")
                 self.model = d.get("model", "")
                 self.base_url = d.get("base_url", "")
+                # MCP 服务器配置（传递到 Agent 工具系统）
+                self._mcp_servers = d.get("mcp_servers", [])
                 # 系统提示词始终从 prompt.py 加载，config 不覆盖
                 self._init_agent()
             except Exception:
@@ -647,8 +756,28 @@ class AgentApp(ctk.CTk):
         if not self.api_key:
             return
         try:
-            p = get_provider(self.provider_name, self.api_key, self.model, self.base_url)
-            self.agent = Agent(p, system_prompt=self.system_prompt)
+            # 创建透明事件总线 + 工作流状态机
+            self.transcript = Transcript(agent_id="calw-gui")
+            def _on_transcript(event):
+                # 部分事件推动 UI 更新
+                if event.type in ("step", "phase", "tool", "loop"):
+                    self.after_idle(self._update_workflow_display)
+            self.transcript.on("*", _on_transcript)
+
+            # Agent 配置（v2.2 透明 + MCP）
+            config = {
+                "api_key": self.api_key,
+                "model": self.model,
+                "base_url": self.base_url,
+                "max_tokens": 8192,
+                "temperature": 0.0,
+                "request_timeout": 120,
+                "enable_speculative": True,
+                "enable_streaming_parser": True,
+                "mcp_servers": getattr(self, '_mcp_servers', []),
+            }
+            self.agent = Agent(config=config, transcript=self.transcript)
+            self.workflow = self.agent.workflow
             self.provider_label.configure(text=self.provider_name)
 
             # Show memory stats if available
@@ -728,6 +857,21 @@ class AgentApp(ctk.CTk):
         except Exception as e:
             self._chat_line(f"上下文分析失败: {e}", "err")
 
+    def _copy_chat(self):
+        """一键复制全部对话/输出到剪贴板。"""
+        try:
+            content = self.chat.get("1.0", "end-1c")
+            if not content.strip():
+                self._chat_line("没有可复制的内容", "dim")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            self.status_bar.configure(text="✅ 已复制到剪贴板，可直接粘贴给分析助手")
+            self.after(3000, lambda: self.status_bar.configure(
+                text="就绪" if not self.busy else "工作中..."))
+        except Exception as e:
+            self._chat_line(f"复制失败: {e}", "err")
+
     # ── Queue ──
 
     def _on_complete(self):
@@ -743,13 +887,24 @@ class AgentApp(ctk.CTk):
         n = len(self.agent.messages) // 2 if self.agent else 0
         self.msg_label.configure(text=f"{n} 轮")
         self._update_context_bar()
-        # Show 100% briefly, then reset
         self._update_task_progress()
         self.after(2000, self._reset_task_progress)
-        # Reset active tool
         if self._active_tool:
             self._set_tool_status(self._active_tool, "done")
             self._active_tool = None
+        # 注入最终工作流总结
+        if self.agent and self.agent.workflow and self.agent.workflow.steps:
+            wf = self.agent.workflow
+            done = sum(1 for s in wf.steps.values() if s.status == "done")
+            total = len(wf.steps)
+            if done == total:
+                self._chat_line(f"  ✅ 所有步骤完成 ({done}/{total}) — 任务结束", "sys")
+            else:
+                failed = sum(1 for s in wf.steps.values() if s.status == "failed")
+                parts = [f"  📊 步骤: {done}/{total} 完成"]
+                if failed:
+                    parts.append(f"  ❌ {failed} 步失败")
+                self._chat_line(" | ".join(parts), "sys")
 
     def _poll_queue(self):
         """Poll UI message queue. Limits per-cycle processing to keep UI responsive."""
@@ -778,11 +933,9 @@ class AgentApp(ctk.CTk):
             self.chat.see("end")
             self.chat.configure(state="disabled")
 
-        # ── Watchdog: detect stuck "工作中" state ──
+        # ── Watchdog: detect stuck, show running duration ──
         if self.busy and self._watchdog_armed:
             elapsed = time.time() - self._last_output_time
-            # Streaming bash (build/compile) needs extended timeouts — output may be silent
-            # for minutes during compilation phases
             if self._active_tool == "bash":
                 warn_threshold = 300
                 reset_threshold = 600
@@ -792,16 +945,23 @@ class AgentApp(ctk.CTk):
 
             if elapsed > warn_threshold and not self._watchdog_warned:
                 self._watchdog_warned = True
-                status_text = f"⚠ 工作中 ({int(elapsed)}s 无响应)"
-                self.status_indicator.configure(text=status_text, text_color="#F44336")
+                self.status_indicator.configure(text=f"⚠ 工作中 ({int(elapsed)}s 无响应)", text_color="#F44336")
                 self._chat_line(f"⚠ 警告: Agent 已 {int(elapsed)}s 无输出，可能已卡死", "err")
             elif elapsed > reset_threshold:
-                # Force reset after timeout
                 self._force_reset("检测到 Agent 卡死（300s 无输出），已自动重置")
             elif elapsed > warn_threshold:
-                # Update counter every second
-                status_text = f"⚠ 工作中 ({int(elapsed)}s)"
-                self.status_indicator.configure(text=status_text, text_color="#FF9800")
+                self.status_indicator.configure(text=f"⚠ 工作中 ({int(elapsed)}s)", text_color="#FF9800")
+            elif self._active_tool and self._active_tool_start:
+                # Show running duration for active tool
+                run_sec = int(time.time() - self._active_tool_start)
+                if run_sec > 0:
+                    curr = self.status_indicator.cget("text")
+                    # Only update duration display, preserve the tool name set in tool_start
+                    if "(" not in curr or "工作中" in curr:
+                        pass  # already handled above
+
+        # ── Workflow status display ──
+        self._update_workflow_display()
 
         self.after(250, self._poll_queue)
 
@@ -835,22 +995,57 @@ class AgentApp(ctk.CTk):
         if t == "text":
             self._chat_stream(d, "asst")
         elif t == "thinking":
-            self._chat_stream(d, "think")
+            # 紧凑显示：只显示开头一段，不刷屏
+            if not hasattr(self, '_think_buffer'):
+                self._think_buffer = ""
+                self._think_header_shown = False
+            self._think_buffer += d
+            if not self._think_header_shown and len(self._think_buffer) > 20:
+                self._think_header_shown = True
+                preview = self._think_buffer[:100].replace("\n", " ")
+                self._chat_line(f"  🧠 思考: {preview}...", "think")
         elif t == "tool_start":
             name, inp = d
-            # Mark previous tool as done if switching
-            if self._active_tool and self._active_tool != name:
-                self._set_tool_status(self._active_tool, "done")
-            self._active_tool = name
-            self._set_tool_status(name, "running")
-            self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
-            self._append_tool(name, inp)
+            # 避免重复显示：streaming 阶段先发空{}，core.py 执行循环再发真实参数
+            if self._active_tool == name:
+                # 第二次调用：只更新参数，不重复显示
+                self._active_tool_input = inp
+            else:
+                # 上一个工具完成
+                if self._active_tool:
+                    self._set_tool_status(self._active_tool, "done")
+                self._active_tool = name
+                self._active_tool_input = inp
+                self._active_tool_start = time.time()
+                self._set_tool_status(name, "running")
+                self._log_activity(name, "running", json.dumps(inp, ensure_ascii=False)[:80])
+                # 显示步骤编号（如 [1/3]）
+                step_prefix = ""
+                if self._turn_total > 1:
+                    step_num = self._turn_done + 1
+                    step_prefix = f"  [{step_num}/{self._turn_total}]"
+                self._append_tool(name, inp, step_prefix)
+
+            # 状态栏更新
+            verb = TOOL_DESCRIPTIONS.get(name, name)
+            cmd_preview = ""
+            if name == "bash" and "command" in inp:
+                cmd_preview = inp["command"][:60]
+            elif "file_path" in inp:
+                cmd_preview = inp["file_path"]
+            if cmd_preview:
+                self.status_indicator.configure(text=f"{verb}: {cmd_preview}", text_color="#FF9800")
+            else:
+                self.status_indicator.configure(text=f"{verb}...", text_color="#FF9800")
         elif t == "tool_result":
             self._turn_done += 1
             self._update_task_progress()
             self._append_tool_result(d)
+            # 补充进度显示
+            if self._turn_total > 1:
+                self._chat_line(f"    → 步骤 {self._turn_done}/{self._turn_total}", "dim")
         elif t == "tool_output":
-            self._chat_stream(d, "tool_r", scroll=False)
+            self._chat_stream(d, "tool_r", scroll=True)
         elif t == "heartbeat":
             # Silent heartbeat from bash streaming — updates watchdog timer, no display
             pass
@@ -858,6 +1053,8 @@ class AgentApp(ctk.CTk):
             self._turn_total = d
             self._turn_done = 0
             self._update_task_progress()
+            if d > 1:
+                self._chat_line(f"  📋 计划执行 {d} 个步骤", "sys")
         elif t == "error":
             if self._active_tool:
                 self._set_tool_status(self._active_tool, "error")
@@ -866,20 +1063,50 @@ class AgentApp(ctk.CTk):
             self._chat_line(f"错误: {d}", "err")
         elif t == "turn_end":
             self._chat_line("", "sep")
+            # 在轮次结束时刷新工作流显示 + 注入下一步摘要
+            self._update_workflow_display()
+            self._inject_turn_summary()
         elif t == "complete":
             self._on_complete()
 
     # ── Chat Display ──
 
     def _chat_stream(self, text: str, tag: str, scroll: bool = True):
+        """流式文本渲染：检测 markdown 代码块并着色。"""
         self.chat.configure(state="normal")
-        self.chat.insert("end", text, tag)
+
+        # 检测代码围栏，用 code 标签渲染代码块内容
+        if tag == "asst" and "```" in text:
+            self._render_markdown_stream(text, tag)
+        else:
+            self.chat.insert("end", text, tag)
+
         self.chat.configure(state="disabled")
         if scroll:
             self.chat.see("end")
         else:
             self._chat_needs_scroll = True
         self._schedule_highlight()
+
+    def _render_markdown_stream(self, text: str, tag: str):
+        """将流式文本中的代码围栏渲染为着色代码块。"""
+        import re
+        fence_re = re.compile(r'```(\w*)\n?(.*?)```', re.DOTALL)
+        last_end = 0
+        for m in fence_re.finditer(text):
+            before = text[last_end:m.start()]
+            if before:
+                self.chat.insert("end", before, tag)
+            lang = m.group(1) or ""
+            code = m.group(2)
+            if lang:
+                self.chat.insert("end", f"  [{lang}]\n", "dim")
+            for line in code.split("\n"):
+                self.chat.insert("end", f"  {line}\n", "code")
+            last_end = m.end()
+        remaining = text[last_end:]
+        if remaining:
+            self.chat.insert("end", remaining, tag)
 
     def _chat_line(self, text: str, tag: str = ""):
         self.chat.configure(state="normal")
@@ -943,32 +1170,235 @@ class AgentApp(ctk.CTk):
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
-    def _append_tool(self, name: str, inp: dict):
+    def _tool_label(self, name: str) -> str:
+        """Get icon + label for a tool name."""
+        icons = {
+            "read": "📖", "write": "✏️", "edit": "🔧", "replace": "🔍",
+            "glob": "🔎", "grep": "🔎", "bash": "💻", "web": "🌐",
+            "web_search": "🔍", "browser": "🌍", "process": "⚙️",
+            "service": "⚙️", "registry": "📋", "gui": "🖱️",
+            "plan": "📋", "task": "✅", "background": "⏳",
+            "remember": "🧠", "test": "🧪", "dep": "📦",
+            "ast": "🌳", "dep_graph": "🕸️", "call_chain": "🔗",
+            "monitor": "📊", "schedule": "⏰", "watch": "👁️",
+            "websocket": "🔌", "download": "📥", "move": "📂",
+            "copy": "📄", "delete": "🗑️", "mkdir": "📁",
+            "ask_user": "💬", "trace_error": "🐛",
+        }
+        return icons.get(name, "⚡")
+
+    def _tool_path_display(self, inp: dict) -> str:
+        """从工具参数中提取要显示的目标路径/命令。"""
+        if "file_path" in inp:
+            return inp["file_path"]
+        if "command" in inp:
+            cmd = inp["command"]
+            return cmd[:80] + ("..." if len(cmd) > 80 else "")
+        if "url" in inp:
+            return inp["url"]
+        if "pattern" in inp:
+            return inp["pattern"]
+        if "query" in inp:
+            return inp["query"]
+        if "path" in inp:
+            return inp["path"]
+        return ""
+
+    def _append_tool(self, name: str, inp: dict, step_prefix: str = ""):
+        """Claude Code 风格：一行工具名 + 目标 + 参数，紧凑可读。"""
         self.chat.configure(state="normal")
-        icon = TOOL_ICONS.get(name, "⚡")
-        preview = json.dumps(inp, ensure_ascii=False)[:200]
-        self.chat.insert("end", f"  {icon} {name}\n", "tool")
-        if preview and preview != "{}":
-            self.chat.insert("end", f"     {preview}\n", "tool_r")
+        icon = self._tool_label(name)
+        path = self._tool_path_display(inp)
+
+        # 工具行：icon  name  目标
+        line = f"  {icon} {name}"
+        if path:
+            line += f"  {path}"
+        # write/edit 显示行数
+        if name == "write" and "content" in inp:
+            lines_count = len(inp["content"].split("\n"))
+            line += f"  (+{lines_count}行)"
+        if name == "edit" and "new_string" in inp:
+            lines_count = len(inp["new_string"].split("\n"))
+            line += f"  (改{lines_count}行)"
+        # 步骤计数
+        if step_prefix:
+            line += f"  {step_prefix}"
+
+        self.chat.insert("end", line + "\n", "tool")
+
+        # 显示目标路径
+        if path:
+            line += f"  {path}"
+
+        # write/edit：显示行数
+        if name == "write" and "content" in inp:
+            lines_count = len(inp["content"].split("\n"))
+            line += f"  (+{lines_count} 行)"
+        if name == "edit" and "new_string" in inp:
+            lines_count = len(inp["new_string"].split("\n"))
+            line += f"  (改 {lines_count} 行)"
+
+        self.chat.insert("end", line + "\n", "tool")
+
+        # 额外参数用小字灰色显示
+        extra = {k: v for k, v in inp.items()
+                 if k not in ("file_path", "command", "url", "pattern", "query", "path", "content") and v}
+        if extra:
+            meta = "    " + " ".join(f"{k}={v}" for k, v in extra.items())
+            if len(meta) > 150:
+                meta = meta[:150] + "..."
+            self.chat.insert("end", meta + "\n", "dim")
+
         self.chat.see("end")
         self.chat.configure(state="disabled")
 
     def _append_tool_result(self, result: str):
+        """Claude Code 风格透明展示：工具结果 + 耗时 + 下一步建议。"""
+        is_err = any(kw in result[:100].lower() for kw in ("错误", "error", "失败", "❌"))
+        current_tool = self._active_tool or ""
+        current_inp = self._active_tool_input or {}
+
+        # 计算耗时
+        elapsed = ""
+        if self._active_tool_start:
+            sec = time.time() - self._active_tool_start
+            elapsed = f" ({sec:.1f}s)" if sec < 60 else f" ({sec/60:.1f}m)"
+
         self.chat.configure(state="normal")
-        # Determine status from result content
-        is_err = result.startswith("错误") or result.startswith("Error")
-        status = "error" if is_err else "done"
 
-        if self._active_tool:
-            self._set_tool_status(self._active_tool, status)
-            preview = result[:120].replace("\n", " ")
-            self._log_activity(self._active_tool, status, preview)
-            self._active_tool = None
+        # ── 统一结果头：工具名 + 状态 + 耗时 ──
+        icon = self._tool_label(current_tool)
+        if is_err:
+            self.chat.insert("end", f"    {icon} {current_tool} ❌ 失败{elapsed}\n", "err")
+        else:
+            self.chat.insert("end", f"    {icon} {current_tool} ✅ 完成{elapsed}\n", "tool")
 
-        trunc = result[:300] + "..." if len(result) > 300 else result
-        self.chat.insert("end", f"    ← {trunc}\n", "tool_r" if not is_err else "err")
+        # ── 错误详情 ──
+        if is_err:
+            summary = result[:300].replace("\n", " ")
+            self.chat.insert("end", f"    {summary}\n", "err")
+            if current_inp:
+                param_str = json.dumps(current_inp, ensure_ascii=False)[:300]
+                self.chat.insert("end", f"    ⚙ {param_str}\n", "dim")
+            for line in result.split("\n")[:5]:
+                if line.strip():
+                    self.chat.insert("end", f"      {line[:200]}\n", "dim")
+            self.chat.see("end")
+            self.chat.configure(state="disabled")
+            if current_tool:
+                self._set_tool_status(current_tool, "error")
+                self._log_activity(current_tool, "error", result[:80].replace("\n", " "))
+                self._active_tool = None
+                self._active_tool_input = {}
+            return
+
+        # ── 成功：按工具类型格式化结果预览 ──
+
+        # write: 内容预览
+        if current_tool == "write" and current_inp.get("content"):
+            content = current_inp["content"]
+            lines = content.split("\n")
+            for line in lines[:10]:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 10:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行\n", "dim")
+
+        # edit: 替换内容预览
+        elif current_tool == "edit" and current_inp.get("new_string"):
+            new_text = current_inp["new_string"]
+            lines = new_text.split("\n")
+            for line in lines[:6]:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 6:
+                self.chat.insert("end", f"      ... 改 {len(lines)} 行\n", "dim")
+
+        # read: 文件内容预览
+        elif current_tool == "read":
+            lines = result.split("\n")
+            for line in lines[:8]:
+                self.chat.insert("end", f"      {line[:200]}\n", "code")
+            if len(lines) > 8:
+                self.chat.insert("end", f"      ... 共 {len(lines)} 行\n", "dim")
+                for line in lines[-3:]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "code")
+
+        # bash: 最后几行输出
+        elif current_tool == "bash":
+            blines = [l for l in result.split("\n") if l.strip()]
+            if len(blines) > 6:
+                self.chat.insert("end", f"      ... 共 {len(blines)} 行输出\n", "dim")
+                for line in blines[-4:]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "dim")
+            elif blines:
+                for line in blines[:6]:
+                    self.chat.insert("end", f"      {line[:200]}\n", "dim")
+
+        # 其余工具: 简短摘要
+        elif result:
+            summary = result[:200].replace("\n", " ")
+            self.chat.insert("end", f"      {summary}\n", "tool_r")
+
+        # ── 下一步建议（从工作流获取）──
+        self._inject_next_step_hint(current_tool)
+
         self.chat.see("end")
         self.chat.configure(state="disabled")
+
+        # 更新工具状态面板
+        if current_tool:
+            self._set_tool_status(current_tool, "done")
+            self._log_activity(current_tool, "done", result[:80].replace("\n", " "))
+            self._active_tool = None
+            self._active_tool_input = {}
+
+    def _inject_next_step_hint(self, completed_tool: str):
+        """步骤完成后，展示一句话总结 + 下一步建议。"""
+        if not self.agent or not self.agent.workflow:
+            return
+        wf = self.agent.workflow
+        if not wf.steps or wf.status != "running":
+            return
+        current = wf.get_current_step()
+        next_name = wf.get_next_step_name()
+        if current:
+            done_count = sum(1 for s in wf.steps.values() if s.status == "done")
+            total = len(wf.steps)
+            step_icon = "✅" if current.status == "done" else "❌"
+            self.chat.insert("end",
+                f"  {step_icon} 步骤 \"{current.name}\" 完成 ({done_count}/{total})\n", "sys")
+        if next_name:
+            self.chat.insert("end",
+                f"  → 下一步: {next_name}\n", "tool")
+
+    def _inject_turn_summary(self):
+        """每轮结束时注入一句话总结 + 下一步建议（Claude Code 风格）。"""
+        if not self.agent or not self.agent.workflow:
+            return
+        wf = self.agent.workflow
+        if not wf.steps or wf.status != "running":
+            return
+        current = wf.get_current_step()
+        if not current:
+            return
+        out = []
+        done = sum(1 for s in wf.steps.values() if s.status == "done")
+        total = len(wf.steps)
+        out.append(f"  📊 进度: {done}/{total}")
+        if current.status == "running":
+            out.append(f"  ▶ 当前: {current.name}")
+        next_name = wf.get_next_step_name()
+        if next_name:
+            out.append(f"  ⏭ 下一步: {next_name}")
+        elif done == total and wf.status == "running":
+            out.append(f"  ✅ 所有步骤已完成")
+            wf.status = "done"
+        if len(out) > 1:
+            self.chat.configure(state="normal")
+            for line in out:
+                self.chat.insert("end", line + "\n", "sys")
+            self.chat.configure(state="disabled")
+            self.chat.see("end")
 
     # ── Actions ──
 
@@ -1009,6 +1439,9 @@ class AgentApp(ctk.CTk):
         self._set_action_buttons(True)
         self.status_indicator.configure(text="Thinking", text_color="#FF9800")
         self._append_user_msg(text)
+        # 重置思考缓冲区
+        self._think_buffer = ""
+        self._think_header_shown = False
 
         # Reset tool statuses
         for t in self.tool_status:
