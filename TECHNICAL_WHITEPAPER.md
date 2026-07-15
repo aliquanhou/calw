@@ -1,33 +1,35 @@
-# Calw v2.1 — Complete Technical Whitepaper
+# Calw v2.2 — Complete Technical Whitepaper
 
-> **取优补短** — Full-spectrum audit report for global developer community
+> **Glass-box Autonomous AI Agent** — Full-spectrum audit report for global developer community
 >
-> This document is a line-by-line, file-by-file public record of every change between **calw-v2.0** and **calw-v2.1**.
+> This document is a line-by-line, file-by-file public record of every change between **calw-v2.1** and **calw-v2.2**.
 > Designed for global community audit, peer review, and transparent governance.
 
 | Version | Date | Branch | Commits | Files Changed | Lines Added | Lines Removed |
 |---------|------|--------|---------|---------------|-------------|---------------|
+| 2.2.0 | 2026-07-15 | `calw-v2.2` | 1 | 18 | 2,039 | 309 |
 | 2.1.0 | 2026-07-13 | `calw-v2.1` | 6 | 57 | 8,931 | 4,499 |
 
-**GitHub**: `https://github.com/aliquanhou/calw/tree/calw-v2.1`  
+**GitHub**: `https://github.com/aliquanhou/calw/tree/calw-v2.2`  
 **License**: Apache 2.0  
-**Authors**: aliquanhou & Claude Code (Anthropic)
+**Author**: calw — Autonomous AI Engineering Agent
 
 ---
 
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
-2. [File-by-File Change Log](#2-file-by-file-change-log)
-3. [Architecture Transformation](#3-architecture-transformation)
-4. [Innovation Engines](#4-innovation-engines)
-5. [Security Audit & Fixes](#5-security-audit--fixes)
-6. [Bug Fixes & Edge Cases](#6-bug-fixes--edge-cases)
-7. [Testing Infrastructure](#7-testing-infrastructure)
-8. [Dependencies & Build](#8-dependencies--build)
-9. [Performance Benchmarks](#9-performance-benchmarks)
-10. [Known Limitations](#10-known-limitations)
-11. [Contribution Guide](#11-contribution-guide)
+2. [What's New in v2.2](#2-whats-new-in-v22)
+3. [File-by-File Change Log](#3-file-by-file-change-log)
+4. [Architecture Transformation](#4-architecture-transformation)
+5. [Innovation Engines](#5-innovation-engines)
+6. [Security Audit & Fixes](#6-security-audit--fixes)
+7. [Bug Fixes & Edge Cases](#7-bug-fixes--edge-cases)
+8. [Testing Infrastructure](#8-testing-infrastructure)
+9. [Dependencies & Build](#9-dependencies--build)
+10. [Performance Benchmarks](#10-performance-benchmarks)
+11. [Known Limitations](#11-known-limitations)
+12. [Contribution Guide](#12-contribution-guide)
 
 ---
 
@@ -35,32 +37,104 @@
 
 ### What is Calw?
 
-Calw is a **provider-agnostic autonomous AI engineering agent** for Windows. It connects to 5 LLM providers (Anthropic, OpenAI, DeepSeek, Gemini, Ollama), executes 36+ system-control tools, and operates with full transparency — every tool call, file change, and command execution is visible to the user in real time, Claude Code style.
+Calw is a **provider-agnostic autonomous AI engineering agent** for Windows. It connects to 5 LLM providers (Anthropic, OpenAI, DeepSeek, Gemini, Ollama), executes 40+ system-control tools, and operates with **glass-box transparency** — every step (thinking, tool calls, results, plan progress) is broadcast as structured events in real time.
 
 ### v2.1: The "Take the Best" Release
 
 This release merges the **clean architecture of v2.1** (explicit initialization, session state, no module-level side effects) with the **best modules from v2.0** (retry, router, researcher, reviewer, project_map, mcpserver, plugin).
 
+### v2.2: The "Glass-box Transparency" Release
+
+This release adds **four major capabilities** on top of v2.1:
+
+1. **🔮 Glass-box Transparency** — `transcript.py` event bus + `workflow.py` state machine. Every agent step produces structured events. GUI shows real-time progress bar, step summaries, next-step hints, tool timing.
+2. **🧠 Sub-agent System** — `agent_loader.py` + `tools_agent.py`. Define agents via `agents/*.md` (YAML frontmatter + Markdown prompt). Execute them in isolated contexts — sync or background.
+3. **🔌 MCP Integration** — `mcp/client.py` + `tools_mcp.py`. Connect any MCP server over stdio, auto-discover tools, register them into the tool system. Zero-config with `mcp_servers` in config.json.
+4. **🚫 Claude Code Loop Alignment** — Switched from `while tool_round < max_tool_rounds` to `while True` (model decides when to stop). Removed all blocking loop detection.
+
 ### What Changed (Aggregate)
 
-| Metric | v2.0 | v2.1 | Delta |
+| Metric | v2.1 | v2.2 | Delta |
 |--------|------|------|-------|
-| Total files | ~40 | 57 tracked | +17 |
-| Agent modules | 23 | 28 | +5 |
-| Lines of Python | ~7,800 | ~9,500 | +1,700 |
-| Tests | 156 | 243 | +87 |
-| LLM providers | 2 | 5 | +3 |
-| Module-level side effects | Present | Eliminated | — |
-| Global variables | 10+ scattered | Centralized in SessionState | — |
-| Tools | 36 | 36+ | +0 (refined) |
-| File reading speed | ~50ms (disk I/O) | ~0.3ms (MMAP) | 166x faster |
-| Tool call latency | Wait for full JSON | Key params execute immediately | 30-50% earlier |
-| CI/CD | None | GitHub Actions (3.10/3.11/3.12) | Added |
-| API key security | Committed to git | Excluded via .gitignore | Fixed |
+| Total files | 57 | 66 | +9 |
+| Agent modules | 28 | 33 | +5 |
+| Lines of Python | ~9,500 | ~11,500 | +2,039 |
+| New capabilities | — | Transcript, Workflow, Sub-agent, MCP | +4 |
+| Loop control | `max_tool_rounds: 50` | `while True` | Zero caps |
+| Tools | 36+ | 40+ | +4 |
+| GUI rendering | Basic | Tool timing, code blocks, step summary, next hint | Enhanced |
 
 ---
 
-## 2. File-by-File Change Log
+## 2. What's New in v2.2
+
+### 2.1 Glass-box Transparency (transcript.py + workflow.py)
+
+**Problem:** In v2.1, users could see tool calls and results in the terminal, but there was no structured, real-time view of *what the agent is doing right now, what it plans to do next, and how far along it is.*
+
+**Solution:** Two new modules provide full transparency:
+
+**`transcript.py`** — Structured event bus. Every agent action emits typed events:
+- `session` — conversation start/end
+- `phase` — phase switches (plan/execute/verify/done)
+- `step` — step lifecycle (start/done/fail)
+- `thought` — thinking deltas
+- `tool` — tool lifecycle (start/delta/result)
+- `text` — streaming text output
+- `loop` — loop warnings
+- `error` — any error
+
+Wildcard subscription: `transcript.on("*", callback)`. Type-filtered: `transcript.on("tool", callback)`. Last 10,000 events retained. Every event serializable via `.dict()`.
+
+**`workflow.py`** — State machine for execution plans:
+```
+wf = Workflow(transcript=transcript)
+wf.create_plan(title, steps)     → plan_id
+wf.start_step("1")               → status = "running"
+wf.complete_step("1", result=)   → status = "done"
+wf.fail_step("1", error=)        → status = "failed"
+wf.progress()                    → 0.33
+wf.get_next_step_name()          → "下一步"
+wf.to_dict()                     → full state snapshot
+```
+
+**CLI `--transcript` mode:** `python -m agent --run "修复bug" --transcript` outputs `@EVENT {...}` JSON lines to stdout.
+
+### 2.2 Sub-agent System (agent_loader.py + tools_agent.py)
+
+**`agent_loader.py`** — Parses `agents/*.md` with YAML frontmatter. Each file defines an agent type with `name`, `description`, `model`, `tools` whitelist, `color`. The Markdown body becomes the agent's system prompt.
+
+**`tools_agent.py`** — `subagent` tool with actions: `run` (sync/background), `agent` (list types), `list` (running agents), `output` (get results), `stop`.
+
+Each sub-agent runs in an isolated Agent instance with its own transcript and workflow.
+
+### 2.3 MCP Integration (mcp/client.py + tools_mcp.py)
+
+**`mcp/client.py`** — Full stdio MCP client (JSON-RPC 2.0): `connect()` → `discover_tools()` → `call_tool(name, args)` → `disconnect()`. Supports tools/list and tools/call.
+
+**`tools_mcp.py`** — `mcp` tool for runtime management: `connect`, `disconnect`, `list`, `call`. Connected server tools auto-register as `mcp__<server>__<tool>`.
+
+Auto-connect via config.json `mcp_servers` array at Agent startup.
+
+### 2.4 Claude Code Loop Alignment (core.py)
+
+**Before (v2.1):** `while tool_round < 50` — hard cap, timeout check, blocked on repeat calls.
+
+**After (v2.2):** `while True` — no cap, no timeout check, no loop detection. The loop ends when the model returns text without tool_calls (natural completion), matching Claude Code's philosophy: the model decides when to stop.
+
+### 2.5 GUI Enhancements (app.py)
+
+- Tool results: show duration (0.3s, 1.2m)
+- Step completion: "✅ 步骤 'X' 完成 (1/3)" + "→ 下一步: Y"
+- Code blocks: syntax-highlighted fence rendering
+- Workflow bar: bottom bar with current step, progress, next step
+- Thinking: compact "🧠 思考: ..." header instead of full text
+- Turn summary: "📊 进度: 2/3 ▶ 当前: X ⏭ 下一步: Y"
+- Log export: 📋 Copy Log button → clipboard
+
+---
+
+## 4. File-by-File Change Log
 
 Every file that differs between `calw-v2.0` and `calw-v2.1`, with the exact nature of changes.
 
@@ -385,7 +459,7 @@ v2.1.0, Python >= 3.10, all 9 core dependencies. requirements.txt syncs with pyp
 
 ---
 
-## 3. Architecture Transformation
+## 5. Architecture Transformation
 
 ### v2.0 Problems
 
@@ -426,7 +500,7 @@ Enhancement Engines: speculative.py | streaming_parser.py | file_cache.py | cont
 
 ---
 
-## 4. Innovation Engines
+## 6. Innovation Engines
 
 ### 4.1 Speculative Execution (speculative.py)
 
@@ -448,7 +522,7 @@ Memory-mapped file I/O: 50-line read ~5ms -> ~0.3ms, 1000+ line read ~50ms -> ~0
 
 ---
 
-## 5. Security Audit & Fixes
+## 7. Security Audit & Fixes
 
 ### 5.1 API Key Leak (Critical — Fixed)
 
@@ -469,7 +543,7 @@ Replaced "你有完全、无限制的系统权限" with "请遵循最小权限�
 
 ---
 
-## 6. Bug Fixes & Edge Cases
+## 8. Bug Fixes & Edge Cases
 
 | Bug | File | Root Cause | Fix |
 |-----|------|-----------|-----|
@@ -483,7 +557,7 @@ Replaced "你有完全、无限制的系统权限" with "请遵循最小权限�
 
 ---
 
-## 7. Testing Infrastructure
+## 9. Testing Infrastructure
 
 243 tests across 16 files. Run: `pytest` or `python -m pytest tests/ -v`.
 
@@ -491,13 +565,13 @@ Coverage: tool dispatch, file ops, web, analysis, session state, MMAP cache, str
 
 ---
 
-## 8. Dependencies & Build
+## 10. Dependencies & Build
 
 Python 3.10+. Core: anthropic, openai, customtkinter, pytest, chromadb, websocket-client, playwright, pyautogui, pygetwindow. Optional: chromadb (memory), playwright (browser), customtkinter (GUI).
 
 ---
 
-## 9. Performance Benchmarks
+## 11. Performance Benchmarks
 
 | Scenario | v2.0 | v2.1 | Improvement |
 |----------|------|------|-------------|
@@ -513,7 +587,7 @@ Python 3.10+. Core: anthropic, openai, customtkinter, pytest, chromadb, websocke
 
 ---
 
-## 10. Known Limitations
+## 12. Known Limitations
 
 1. **No command whitelist/blacklist** — bash can execute any command
 2. **API keys in plaintext** — config.json stores keys unencrypted
@@ -528,7 +602,7 @@ Items 5 and 6 represent **regressions from v2.0** that should be restored in a f
 
 ---
 
-## 11. Contribution Guide
+## 13. Contribution Guide
 
 ### Development Setup
 ```bash
@@ -562,6 +636,6 @@ Full text: https://www.apache.org/licenses/LICENSE-2.0
 
 ---
 
-*Built with love by aliquanhou*  
-*Architecture guidance and code review by Claude Code (Anthropic)*  
-*This whitepaper is a public record — every claim is verifiable against the git history at https://github.com/aliquanhou/calw*
+*Calw — Autonomous AI Engineering Agent*  
+*Built for transparency, freedom, and real work.*  
+*This whitepaper is a public record — every claim is verifiable against the git history at https://github.com/aliquanhou/calw/tree/calw-v2.2*
