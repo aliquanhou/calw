@@ -273,6 +273,10 @@ def _register_builtins():
         "agent.tools_memory",
         # 增强工具（定时/监控/WebSocket）
         "agent.tools_extra",
+        # v2.2: 子Agent系统
+        "agent.tools_agent",
+        # v2.2: MCP 集成
+        "agent.tools_mcp",
     ]
 
     for module in tool_modules:
@@ -314,12 +318,20 @@ def _register_plugins():
                 print(f"[tools] 插件加载失败 {mod_name}: {e}")
 
 
-def init_tools():
+def init_tools(config: dict | None = None):
     """初始化工具系统（显式调用，无模块级副作用）。
 
     必须在 Agent 启动时显式调用一次。
     """
     _register_builtins()
+
+    # 自动连接 MCP 服务器（如果配置了）
+    if config:
+        try:
+            from .tools_mcp import auto_connect_servers
+            auto_connect_servers(config)
+        except Exception:
+            pass
 
 
 # ── v2.0 向后兼容导出 ──

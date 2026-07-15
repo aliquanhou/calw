@@ -67,6 +67,13 @@ def get_handler(tool_name: str) -> Any | None:
     return None
 
 
+def set_session_workflow(workflow: Any):
+    """设置当前会话的工作流引用（供工具函数同步状态）。"""
+    state = get_state()
+    if state:
+        state.workflow = workflow
+
+
 class SessionState:
     """会话状态 —— 管理一次用户的完整对话状态。"""
 
@@ -78,6 +85,9 @@ class SessionState:
 
         # 向后兼容：工具注册等
         self._tool_registry: dict[str, dict] = {}
+
+        # 工作流状态机引用（由 core.Agent 设置，供工具函数同步）
+        self.workflow: Any = None
         self._plugin_handlers: dict = {}
         self._builtin_handlers: dict = {}
         self._tool_definitions: list = []

@@ -1,82 +1,121 @@
 """Entry point: python -m agent
 
-Launches the GUI application by default.
-Use --cli for the command-line REPL mode.
+默认启动 GUI。
+使用 --cli 进入命令行 REPL。
+使用 --run 执行单条指令。
+增加 --transcript 输出 JSON 事件流供 UI 层消费。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
 
 def main() -> None:
-    # Fix Windows console encoding for Unicode (emoji, CJK)
     if sys.platform == "win32":
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
-        sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdin.reconfigure(encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="AI Agent - 多 LLM 支持")
-    parser.add_argument("--cli", action="store_true", help="CLI REPL 模式")
+    parser = argparse.ArgumentParser(description="Calw AI Agent - 透明自主编程")
+    parser.add_argument("--cli", action="store_true", help="命令行 REPL 模式")
     parser.add_argument("--run", type=str, help="非交互模式：执行一条指令后退出")
-    parser.add_argument("--json", action="store_true", help="JSON 格式输出（配合 --run）")
-    parser.add_argument("--model", type=str, default="", help="指定模型名")
-    parser.add_argument("--router", action="store_true", help="启用智能模型路由")
+    parser.add_argument("--model", type=str, default="", help="模型名（默认 claude-sonnet-4-20250514）")
+    parser.add_argument("--provider", type=str, default="anthropic", help="LLM 提供商")
+    parser.add_argument("--transcript", action="store_true", help="输出 JSON 事件流（供 UI 消费）")
+    parser.add_argument("--json", action="store_true", help="最终结果以 JSON 格式输出")
     parser.add_argument("prompt", nargs="*", help="单次执行指令（仅 --cli 模式）")
     args = parser.parse_args()
 
-    if args.run:
-        from .providers import OpenAIProvider, AnthropicProvider, get_provider, reset_usage, get_usage_summary
-        from .core import Agent, ConsoleHandler, StreamHandler
-        from .router import recommend_model, classify_task
-        model = args.model or os.environ.get("LLM_MODEL", "deepseek-chat")
-        if args.router:
-            task_type = classify_task(args.run)
-            available = OpenAIProvider.models + AnthropicProvider.models
-            recommended = recommend_model(args.run, available)
-            if recommended and recommended != model:
-                model = recommended
-        provider = get_provider("DeepSeek" if "deepseek" in model or "gpt" in model else "Anthropic Claude", api_key, model)
-        agent = Agent(provider)
-        if args.json:
-            class JH(StreamHandler):
-                def __init__(s): s.text="";s.tools=[]
-                def on_text(s,t):s.text+=t
-                def on_tool_start(s,n,i):s.tools.append({"name":n,"input":i})
-                def on_error(s,e):s.text+=f"\n[错误]{e}"
-            h=JH(); agent.run_iteration(args.run, h)
-            import json; print(json.dumps({"text":h.text,"tools":h.tools,"usage":get_usage_summary()}, ensure_ascii=False, indent=2))
-        else:
-            agent.run_iteration(args.run, ConsoleHandler())
-        return
+    api_key = (os.environ.get("ANTHROPIC_API_KEY") or
+               os.environ.get("DEEPSEEK_API_KEY") or
+               os.environ.get("OPENAI_API_KEY"))
 
-    if args.cli:
-        # ── CLI mode ──
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            print("错误: 未设置 API Key 环境变量 (ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY)")
-            sys.exit(1)
-
-        from .core import Agent
-        from .providers import OpenAIProvider
-        provider = OpenAIProvider(api_key=api_key, model=os.environ.get("LLM_MODEL", "deepseek-chat"))
-        agent = Agent(provider)
-
-        if args.prompt:
-            from .core import ConsoleHandler
-            prompt_text = " ".join(args.prompt)
-            try:
-                agent.run_iteration(prompt_text, ConsoleHandler())
-            except Exception as e:
-                print(f"\033[31m错误: {e}\033[0m")
-                sys.exit(1)
-        else:
-            agent.run_repl()
-    else:
-        # ── GUI mode (default) ──
+    # ── GUI 模式（默认） ──
+    if not args.cli and not args.run:
         from .app import run as run_gui
         run_gui()
+        return
+
+    # ── CLI / --run 模式 ──
+    if not api_key:
+        print("错误: 未设置 API Key (ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY)")
+        sys.exit(1)
+
+    from .core import Agent
+    from .transcript import Transcript
+
+    config = {
+        "api_key": api_key,
+        "provider": args.provider if args.provider else "anthropic",
+        "model": args.model or os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514"),
+    }
+
+    transcript = Transcript(agent_id="calw")
+
+    if args.transcript:
+        def _json_printer(event):
+            line = json.dumps(event.dict(), ensure_ascii=False)
+            print(f"@EVENT {line}", flush=True)
+        transcript.on("*", _json_printer)
+
+    agent = Agent(config=config, transcript=transcript)
+
+    if args.run:
+        result = agent.run(args.run,
+                           on_text=lambda t: print(t, end="", flush=True))
+        if args.json:
+            print("\n" + json.dumps({
+                "result": result,
+                "summary": transcript.summary(),
+                "workflow": agent.workflow.to_dict(),
+            }, ensure_ascii=False, indent=2))
+        agent.close()
+        return
+
+    # ── CLI REPL ──
+    from .core import StreamHandler
+
+    class ConsoleHandler(StreamHandler):
+        def on_text(self, text): print(text, end="", flush=True)
+        def on_thinking(self, text): print(f"\033[90m{text}\033[0m", end="", flush=True)
+        def on_tool_start(self, name, input_data):
+            preview = json.dumps(input_data, ensure_ascii=False)[:200]
+            print(f"\n\033[33m⚡ {name}({preview})\033[0m")
+        def on_tool_result(self, result):
+            display = result[:300].replace("\n", "\\n")
+            print(f"\033[33m  → {display}\033[0m")
+        def on_error(self, error): print(f"\033[31m错误: {error}\033[0m")
+        def on_complete(self): print()
+
+    print("\033[1;34m" + "=" * 60 + "\n  Calw v2.2 - 透明自主编程\n  命令: /exit 退出  /status 查看工作流\n" + "=" * 60 + "\033[0m")
+    while True:
+        try:
+            user_input = input("\033[1;32m>>> \033[0m").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye!")
+            break
+        if not user_input:
+            continue
+        if user_input == "/exit":
+            print("Bye!")
+            break
+        elif user_input == "/clear":
+            agent = Agent(config=config, transcript=transcript)
+            print("\033[33m对话已重置\033[0m")
+            continue
+        elif user_input == "/status":
+            wf = agent.workflow.to_dict()
+            print(f"\033[33m工作流状态: {json.dumps(wf, ensure_ascii=False, indent=2)}\033[0m")
+            continue
+        try:
+            agent.run_iteration(user_input, ConsoleHandler())
+        except KeyboardInterrupt:
+            print("\n\033[33m⏹ 已中断\033[0m")
+        except Exception as e:
+            print(f"\033[31m错误: {e}\033[0m")
 
 
 if __name__ == "__main__":

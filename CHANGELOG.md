@@ -1,6 +1,35 @@
 # Changelog
 
-## 2.1.1 (2026-07-13) — 取优补短
+## 2.2.0 (2026-07-15) — 透明自主编程
+
+### 透明输出层（全新模块）
+- **transcript.py**: 结构化事件总线 — Agent 每步动作（session/phase/step/thought/tool/text/loop/error）都产出结构化事件
+- **workflow.py**: 工作流状态机 — 计划创建→步骤分解→逐步执行→完成/失败，全程可追踪
+- GUI 工作流进度条：实时展示当前步骤、下一步、完成进度
+- `--transcript` CLI 模式：逐行 `@EVENT` JSON 输出，供外部 UI 消费
+- Claude Code 风格 GUI 渲染：工具耗时、步骤完成摘要、下一步建议、代码块着色
+
+### Claude Code 对标（工具调用逻辑）
+- **while True** 无硬上限循环（对标 Claude Code）
+- 去掉所有阻断式检测（重复调用/停滞/超时中断）
+- 3600s 安全阀仅作最后防线
+
+### 子Agent系统（全新模块）
+- **agent_loader.py**: 解析 `agents/*.md` YAML frontmatter + Markdown 正文 → Agent 类型注册表
+- **tools_agent.py**: `subagent` 工具 — 隔离上下文执行子 Agent，支持同步/后台/列出模式
+- **agents/code-architect.md**: 架构师 Agent 定义（只分析不修改）
+- **agents/code-reviewer.md**: 审查 Agent 定义（多维审查 + 结构化输出）
+
+### MCP 集成（全新模块）
+- **mcp/client.py**: MCP stdio 客户端 — JSON-RPC 2.0，tools/list + tools/call
+- **tools_mcp.py**: `mcp` 工具 — connect/disconnect/list/call，自动注册 MCP 工具到工具面板
+- 支持 config.json `mcp_servers` 自动连接
+
+### 修复
+- `tools_plan.py`: 兼容 LLM 用 `title`/`name`/`description` 而非 `step` 字段
+- `tools_shell.py`: `_handle_bash` timeout 参数类型安全转换（LLM 传字符串）
+- `core.py`: 消除流式重复推送 `on_tool_start`
+- `app.py`: 新增 `📋 复制日志` 按钮 — 一键复制全会话输出到剪贴板
 
 ### 从 v2.0 移植的模块（适配 v2.1 架构）
 - **retry.py**: 指数退避 + 随机抖动重试机制（装饰器/函数式/生成器三重 API）

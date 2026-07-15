@@ -17,6 +17,8 @@ import threading
 import time
 import uuid
 
+from .session import get_state
+
 _BACKGROUND_TASKS: dict[str, dict] = {}
 _BT_LOCK = threading.Lock()
 _PLAN_COUNTER: int = 0
@@ -166,6 +168,14 @@ def _handle_plan(action: str = "list", title: str = "", plan_id: str = "",
                     s.setdefault("id", i)
                     s.setdefault("status", "pending")
                     s.setdefault("depends_on", [])
+                    # 兼容 "title" 等别名键 → 统一为 "step"
+                    if "step" not in s:
+                        for alias in ("title", "name", "task", "description", "action"):
+                            if alias in s:
+                                s["step"] = s[alias]
+                                break
+                        else:
+                            s["step"] = f"步骤 {i+1}"
 
             _PLAN_COUNTER += 1
             pid = f"plan-{_PLAN_COUNTER}"
@@ -176,6 +186,16 @@ def _handle_plan(action: str = "list", title: str = "", plan_id: str = "",
             }
             with open(os.path.join(PLANS_DIR, f"{pid}.json"), "w", encoding="utf-8") as f:
                 json.dump(plan_data, f, ensure_ascii=False, indent=2)
+
+            # 同步到 Workflow 状态机
+            state = get_state()
+            if state and state.workflow:
+                wf_steps = [
+                    {"id": str(s.get("id", i)), "name": s.get("step", str(s)),
+                     "depends_on": [str(d) for d in s.get("depends_on", [])]}
+                    for i, s in enumerate(step_list)
+                ]
+                state.workflow.create_plan(title, wf_steps)
 
             done = sum(1 for s in step_list if s.get("status") == "completed")
             lines = [f"[计划] ✅ [{pid}] {title}（{done}/{len(step_list)}）"]
@@ -207,6 +227,18 @@ def _handle_plan(action: str = "list", title: str = "", plan_id: str = "",
             pl["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
             with open(plan_file, "w", encoding="utf-8") as f:
                 json.dump(pl, f, ensure_ascii=False, indent=2)
+
+            # 同步到 Workflow 状态机
+            state = get_state()
+            if state and state.workflow:
+                step_id = str(step_index)
+                if step_status == "in_progress":
+                    state.workflow.start_step(step_id)
+                elif step_status == "completed":
+                    state.workflow.complete_step(step_id, result="")
+                elif step_status == "failed":
+                    state.workflow.fail_step(step_id, error="")
+
             done = sum(1 for s in sl if s.get("status") == "completed")
             r = f"[计划] [{plan_id}] step {step_index} → {step_status}（{done}/{len(sl)}）"
             if step_status == "completed":
@@ -263,6 +295,18 @@ def _handle_task(status: str = "", message: str = "") -> str:
     """标记步骤状态。status: start/progress/done/fail"""
     icons = {"start": "▶", "progress": "~", "done": "✅", "fail": "❌"}
     msg = f"  {message}" if message else ""
+
+    # 同步到 Workflow 状态机
+    state = get_state()
+    if state and state.workflow and state.workflow.current_step_id:
+        wf = state.workflow
+        if status == "start" or status == "progress":
+            wf.start_step(wf.current_step_id)
+        elif status == "done":
+            wf.complete_step(wf.current_step_id, result=message)
+        elif status == "fail":
+            wf.fail_step(wf.current_step_id, error=message)
+
     return f"{icons.get(status, '·')} {status}{msg}"
 
 

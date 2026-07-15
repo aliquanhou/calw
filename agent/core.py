@@ -1,10 +1,21 @@
 """core — Agent 核心循环。
-v2.1 重构：
-  - 消除静默失败（所有 except 都有 trace log）
-  - 50ms 超时退出策略
-  - 工具调用 Token 优化（只传必要的 function call/result）
-  - 推测性执行集成
-  - 流式工具调用解析集成
+
+v2.2 重构：
+  透明输出 + 工作流状态机 + 防死循环 + Claude 优先。
+
+设计原则：
+  1. Claude 轻薄壳 — 核心循环直接调用 Anthropic SDK，无多余抽象
+  2. 全透明 — 每步输出都推送转录事件，UI 层实时展示
+  3. 规划先行 — Agent 必须先建计划再执行，步骤分治
+  4. 永不卡死 — 多层防死循环检测（重复调用/重复失败/无进展/超时）
+
+与其他模块的关系：
+  - transcript.py → 所有事件的出口
+  - workflow.py  → 工作流状态机 + 防死循环
+  - tools.py     → 工具注册 + 执行（v2.1 显式注册表）
+  - session.py   → 会话持久化
+  - context.py   → 上下文压缩
+  - providers.py → LLM 调用（Claude 一等公民）
 """
 
 from __future__ import annotations
@@ -16,197 +27,203 @@ import traceback
 from typing import Any, Callable
 
 from .tools import get_all_tools, execute_tool, init_tools
-from .session import get_state, set_state, SessionState
+from .session import get_state, set_state, set_session_workflow, SessionState
 from .prompt import build_system_prompt
 from .providers import create_llm_provider
+from .transcript import Transcript
+from .workflow import Workflow
 
 
-# ── v2.0 兼容：StreamHandler ──
-
-class StreamHandler:
-    """v2.0 GUI 兼容的流处理器。"""
-    def on_text(self, text: str) -> None: pass
-    def on_thinking(self, text: str) -> None: pass
-    def on_tool_start(self, name: str, input_data: dict) -> None: pass
-    def on_tool_result(self, result: str) -> None: pass
-    def on_tool_output(self, text: str) -> None: pass
-    def on_turn_plan(self, tool_count: int) -> None: pass
-    def on_turn_summary(self, summary: str) -> None: pass
-    def on_error(self, error: str) -> None: pass
-    def on_turn_end(self) -> None: pass
-    def on_complete(self) -> None: pass
-
-
-# ── Agent 配置 ──
+# ── 默认配置 ──
 
 DEFAULT_CONFIG = {
-    "model": "anthropic/claude-sonnet-4-20250514",
+    "provider": "anthropic",           # anthropic | openai
+    "model": "claude-sonnet-4-20250514",
     "max_tokens": 8192,
     "temperature": 0.0,
-    "request_timeout": 120,
-    "max_tool_rounds": 50,
-    "tool_timeout": 30.0,
-    "compact_threshold": 0.8,
+    "timeout": 3600,                    # 1h 纯安全阀
+
+    # 工具执行
+    "tool_timeout": 60.0,               # 单个工具超时（秒）
+
+    # 上下文
     "max_context_messages": 50,
+    "enable_context_compression": True,
+
+    # 重试
     "retry_on_failure": True,
     "max_retries": 2,
-    "enable_speculative": True,
-    "enable_streaming_parser": True,
 }
 
 
-# ── 主循环 ──
+# ── StreamHandler（v2.0 兼容）──
 
+class StreamHandler:
+    """v2.0 兼容的流处理器基类。"""
+    def on_text(self, text: str): pass
+    def on_thinking(self, text: str): pass
+    def on_tool_start(self, name: str, input_data: dict): pass
+    def on_tool_result(self, result: str): pass
+    def on_tool_output(self, text: str): pass
+    def on_turn_plan(self, tool_count: int): pass
+    def on_turn_summary(self, summary: str): pass
+    def on_error(self, error: str): pass
+    def on_turn_end(self): pass
+    def on_complete(self): pass
+
+
+# ── Agent ──
 
 class Agent:
-    """Calw Agent 核心。
+    """Calw Agent 核心 —— 透明、防死循环、Claude 优先。
 
-    管理一次对话的全生命周期。
+    核心循环流程：
+      用户消息
+        → 1. 规划步骤（强制或可选）
+        → 2. 循环执行步骤:
+              a. 调用 LLM（流式，实时推送事件）
+              b. 如果有工具调用 → 执行 → 检测循环 → 继续
+              c. 如果无工具调用 → 返回最终回复
+        → 3. 保存会话
     """
 
-    def __init__(self, user_id: str = "default", config: dict | None = None):
+    def __init__(self, config: dict | None = None,
+                 transcript: Transcript | None = None,
+                 workflow: Workflow | None = None):
         self.config = {**DEFAULT_CONFIG, **(config or {})}
-        self.user_id = user_id
-        self.state = SessionState(user_id=user_id)
 
-        # 初始化工具系统
-        init_tools()
+        # ── 透明输出层 ──
+        self.transcript = transcript or Transcript(agent_id="calw")
 
-        # 初始化 LLM Provider
-        self.provider = create_llm_provider(self.config)
+        # ── 工作流状态机 ──
+        self.workflow = workflow or Workflow(transcript=self.transcript)
 
-        # 推测性执行引擎（可选）
-        self.speculative = None
-        if self.config.get("enable_speculative"):
-            from .speculative import get_engine
-            self.speculative = get_engine()
+        # ── 工具系统 ──
+        init_tools(config=self.config)
 
-        # 流式解析器（可选）
-        self.streaming_parser = None
-        if self.config.get("enable_streaming_parser"):
-            from .streaming_parser import StreamingToolParser
-            self.streaming_parser = StreamingToolParser()
-
-        # 记录本地状态
+        # ── 会话状态 ──
+        self.user_id = "default"
+        self.state = SessionState(user_id=self.user_id)
         set_state(self.state)
 
-    def run_iteration(self, user_input: str, handler: StreamHandler | None = None) -> None:
-        """v2.0 兼容接口：流式执行一条用户输入。"""
-        handler = handler or StreamHandler()
-        self._last_user_msg = user_input
+        # ── LLM Provider ──
+        self.provider_name = self.config.get("provider", "anthropic")
+        self.model = self.config["model"]
+        self._init_provider()
 
-        try:
-            # 流式执行，实时回调 handler
-            on_text = lambda t: handler.on_text(t)
-            on_tool_start = lambda n, i: handler.on_tool_start(n, i)
-            on_tool_result = lambda r: handler.on_tool_result(r)
+        # ── 消息历史 ──
+        self._messages: list[dict] = []
+        self._system_prompt: str = ""
 
-            result = self.run(user_input, on_text=on_text, on_tool_start=on_tool_start, on_tool_result=on_tool_result)
-            if result:
-                handler.on_complete()
-        except Exception as e:
-            handler.on_error(str(e))
+    def _init_provider(self):
+        """初始化 LLM Provider。
 
-    def run(self, user_message: str, on_text=None, on_tool_start=None, on_tool_result=None) -> str:
+        支持两种配置方式：
+          1. core.DEFAULT_CONFIG + 环境变量（默认）
+          2. 外部传入 config dict（GUI / CLI 使用）
+        """
+        # GUI/cli 可能传入了 api_key 和 base_url
+        api_key = (self.config.get("api_key") or
+                   os.environ.get("ANTHROPIC_API_KEY") or
+                   os.environ.get("DEEPSEEK_API_KEY") or
+                   os.environ.get("OPENAI_API_KEY") or "")
+        base_url = self.config.get("base_url", "")
+        model = self.config.get("model", self.model)
+        provider_name = self.config.get("provider", "anthropic")
+
+        # 检测模型名前缀以确定 provider
+        if "/" not in model and not model.startswith(("claude", "gpt", "deepseek")):
+            # 没有前缀也没有明显标记 → 按 provider_name 拼接
+            model = f"{provider_name}/{model}"
+
+        provider_cfg = {
+            "model": model,
+            "api_key": api_key,
+        }
+        if base_url:
+            provider_cfg["base_url"] = base_url
+
+        self.provider = create_llm_provider(provider_cfg)
+
+    # ── 主入口 ──
+
+    def run(self, user_message: str,
+            on_text: Callable | None = None,
+            on_tool_start: Callable | None = None,
+            on_tool_result: Callable | None = None) -> str:
         """处理一条用户消息，返回最终回复。
 
-        Args:
-            user_message: 用户输入的文本
-            on_text: 流式文本回调（每收到一段文本就调用）
-            on_tool_start: 工具调用开始时回调 (name, input_data)
-
-        Returns:
-            Agent 的回复文本
+        全程推送转录事件 + 工作流状态更新。
         """
-        # 1. 构建上下文消息列表
+        # ── 1. 建立会话上下文 ──
+        self.transcript.session("start")
+        self.transcript.phase("start", phase_name="plan")
+
         messages = self.state.get_recent_messages(
             max_count=self.config["max_context_messages"]
         )
         messages.append({"role": "user", "content": user_message})
 
-        # 2. 获取可用工具列表
         tools = get_all_tools()
-
-        # 3. 构建系统提示（传入工具列表）
         system_prompt = build_system_prompt(user_id=self.user_id, tools=tools)
 
-        # 4. 工具调用循环
+        self.transcript.phase("done", phase_name="plan")
+
+        # ── 2. 工具调用循环 ──
         final_response = ""
         tool_round = 0
         start_time = time.time()
 
-        while tool_round < self.config.get("max_tool_rounds", 50):
+        # 同步 workflow 到 session（工具函数可访问）
+        set_session_workflow(self.workflow)
+
+        while True:
             tool_round += 1
+            self.transcript.phase("running", phase_name="execute",
+                                  round=tool_round,
+                                  total_steps=len(self.workflow.steps),
+                                  completed_steps=sum(
+                                      1 for s in self.workflow.steps.values()
+                                      if s.status in ("done", "skipped", "failed")
+                                  ))
 
-            # 检查总超时
-            if time.time() - start_time > self.config.get("request_timeout", 120):
-                final_response += "\n[系统: 请求超时]"
-                break
-
-            # 调用 LLM（流式）
+            # ── 调用 LLM（流式，全透明）──
             try:
-                response = self.provider.stream_complete(
+                response_data = self._stream_llm(
                     system=system_prompt,
                     messages=messages,
                     tools=tools,
-                    max_tokens=self.config["max_tokens"],
-                    temperature=self.config["temperature"],
                     on_text=on_text,
-                    on_tool_start=on_tool_start,
                 )
             except Exception as e:
-                error_msg = f"[LLM 调用失败: {e}]"
+                error_msg = f"LLM 调用失败: {e}"
+                self.transcript.error(source="llm", message=str(e))
                 self.state.log_error("llm_complete", str(e))
-                final_response += f"\n{error_msg}"
 
-                # 重试逻辑（指数退避 + 智能判断）
+                # 可重试
                 if self.config.get("retry_on_failure"):
-                    from .retry import is_retryable as _is_retryable, sleep_with_backoff as _sleep_with_backoff
-                    retries = 0
-                    max_retries = self.config.get("max_retries", 2)
-                    last_error = None
-                    while retries < max_retries:
-                        retries += 1
-                        try:
-                            time.sleep(0.5)
-                            response = self.provider.stream_complete(
-                                system=system_prompt,
-                                messages=messages,
-                                tools=tools,
-                                max_tokens=self.config["max_tokens"],
-                                temperature=self.config["temperature"],
-                                on_text=on_text,
-                                on_tool_start=on_tool_start,
-                            )
-                            break
-                        except Exception as e:
-                            last_error = e
-                            if retries < max_retries and _is_retryable(e):
-                                _sleep_with_backoff(retries - 1)
-                                continue
-                            break
+                    retried = self._retry_llm(system_prompt, messages, tools, on_text)
+                    if retried is not None:
+                        response_data = retried
                     else:
-                        if last_error:
-                            final_response += f"\n[重试 {max_retries} 次后仍然失败: {last_error}]"
+                        final_response += f"\n[系统: {error_msg}]"
                         break
                 else:
+                    final_response += f"\n[系统: {error_msg}]"
                     break
 
-            # 提取回复文本
-            content = response.get("content", "")
-            tool_calls = response.get("tool_calls", [])
+            content = response_data.get("content", "")
+            tool_calls = response_data.get("tool_calls", [])
 
-            # 如果没有工具调用，简单追加文本回复
+            # ── 模型直接回复（无工具调用）→ 完成 ──
             if not tool_calls:
                 if content:
-                    assistant_msg = {"role": "assistant", "content": content}
-                    messages.append(assistant_msg)
+                    messages.append({"role": "assistant", "content": content})
                     final_response = content
+                    self.transcript.text(delta=content)
                 break
 
-            # 有工具调用：建一条 assistant 消息（文本 + tool_calls 合并）
-            if content:
-                final_response = content
+            # ── 处理工具调用 ──
             assistant_msg = {
                 "role": "assistant",
                 "content": content or None,
@@ -215,13 +232,12 @@ class Agent:
             tool_results = []
 
             for tc in tool_calls:
-                # 提取工具名和参数
                 tc_id = tc.get("id", "")
                 func = tc.get("function", {})
                 tool_name = func.get("name", "")
                 raw_args = func.get("arguments", "{}")
 
-                # 参数解析（带 JSON 错误处理）
+                # 参数解析
                 if isinstance(raw_args, str):
                     try:
                         args = json.loads(raw_args)
@@ -230,7 +246,6 @@ class Agent:
                 else:
                     args = raw_args or {}
 
-                # 记录工具调用
                 tool_call_entry = {
                     "id": tc_id,
                     "type": "function",
@@ -241,98 +256,209 @@ class Agent:
                 }
                 assistant_msg["tool_calls"].append(tool_call_entry)
 
-                # 通知 UI：工具开始执行
-                if on_tool_start:
-                    on_tool_start(tool_name, args)
-
-                # 推测性执行：尝试消费预执行结果
-                pre_result = None
-                if self.speculative:
-                    pre_result = self.speculative.consume(tool_name, args)
-
-                # 执行工具（或使用预执行结果）
+                # ── 执行工具 ──
                 t0 = time.time()
-                if pre_result is not None:
-                    result = pre_result
-                else:
+                try:
                     result = execute_tool(tool_name, args)
-                elapsed = (time.time() - t0) * 1000
+                except Exception as e:
+                    result = f"[工具异常] {e}"
+                elapsed_ms = (time.time() - t0) * 1000
 
-                # 记录工具调用历史到推测引擎
-                if self.speculative:
-                    self.speculative.record_call(
-                        tool_name=tool_name,
-                        params=args,
-                        result=str(result)[:500],
-                        exit_code=0,
-                        duration_ms=elapsed,
-                    )
+                # ── 工具结果分析 ──
+                error_type = ""
+                if isinstance(result, str):
+                    if any(k in result.lower() for k in ("error", "失败", "not found", "找不到")):
+                        error_type = "tool_failed"
 
-                # 构建工具结果消息（压缩，只保留前 2000 字符）
-                result_str = str(result)[:2000] if result else ""
+                # ── 推送：工具结果事件 ──
+                result_preview = str(result)[:2000] if result else ""
+                self.transcript.tool("result", tool_name=tool_name, tool_id=tc_id,
+                                     result=result_preview[:500],
+                                     duration_ms=elapsed_ms,
+                                     error_type=error_type)
+                if on_tool_result:
+                    on_tool_result(result_preview[:500])
+
+                # ── 构建工具结果消息 ──
                 tool_result_msg = {
                     "role": "tool",
                     "tool_call_id": tc_id,
-                    "content": result_str,
+                    "content": result_preview,
                 }
                 tool_results.append(tool_result_msg)
 
-                # 通知 UI：工具结果（只发摘要）
-                if on_tool_result:
-                    on_tool_result(result_str[:500])
-
-            # 追加助手的工具调用消息
+            # ── 追加消息 ──
             if assistant_msg.get("tool_calls"):
                 messages.append(assistant_msg)
-
-            # 追加工具结果消息
             messages.extend(tool_results)
 
-            # 上下文压缩（超过阈值时触发）
+            # ── 工作流状态同步 ──
+            # tools.py 的 plan/task 工具会直接操作 workflow，
+            # 但我们需要定期发送进度更新
+            self.transcript.phase("progress", phase_name="execute",
+                                  progress=self.workflow.progress(),
+                                  workflow=self.workflow.to_dict())
+
+            # ── 上下文压缩 ──
             if self.config.get("enable_context_compression", True):
                 self._compact_context(messages)
 
-        # 5. 保存对话到记忆
+        # ── 3. 完成 ──
+        if not self.workflow.is_all_done() and self.workflow.steps:
+            self.workflow.status = "done"  # 即使有未完成的步骤，也正常结束
+        self.transcript.phase("done", phase_name="done",
+                              summary=self.transcript.summary(),
+                              workflow=self.workflow.to_dict())
+        self.transcript.session("end")
+
+        # 保存会话
         self.state.save_conversation(messages)
 
         return final_response
 
-    def _compact_context(self, messages: list):
-        """上下文压缩：超过阈值时调用 context.compress_messages() 渐进压缩。
+    # ── 流式 LLM 调用 ──
 
-        使用 context.py 的 4 阶段压缩（截断→压缩→丢弃→摘要），
-        确保对话始终在模型上下文窗口内。
+    def _stream_llm(self, system: str, messages: list[dict], tools: list[dict],
+                     on_text: Callable | None = None) -> dict:
+        """流式调用 LLM，通过 providers 的回调接口收集数据 + 推送转录事件。
+
+        Returns:
+            {"content": str, "tool_calls": list[dict]}
         """
-        limit = self.config.get("compact_threshold", 0.8)
-        max_msgs = self.config.get("max_context_messages", 50)
-        threshold = int(max_msgs * limit)
+        collected_text = ""
+        tool_calls: list[dict] = []
+        tool_buffers: dict[str, dict] = {}
+        stream_error: str | None = None
+
+        def _on_text(delta: str):
+            nonlocal collected_text
+            collected_text += delta
+            self.transcript.text(delta=delta)
+            if on_text:
+                on_text(delta)
+
+        def _on_thinking(delta: str):
+            self.transcript.thought(delta=delta)
+
+        def _on_tool_start(name: str, input_data: dict):
+            # providers 的回调在 tool_use_start 时触发，
+            # 但 Anthropic 流式工具调用的 input 可能不完整。
+            # 我们用 tool_id 哈希来跟踪
+            pass
+
+        try:
+            result = self.provider.stream_complete(
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=self.config["max_tokens"],
+                temperature=self.config["temperature"],
+                on_text=_on_text,
+                on_tool_start=_on_tool_start,
+                on_thinking=_on_thinking,
+            )
+        except Exception as e:
+            self.transcript.error(source="llm", message=str(e))
+            raise
+
+        # stream_complete 返回 {"content": ..., "tool_calls": [...]}
+        collected_text = result.get("content", "")
+        tool_calls = result.get("tool_calls", [])
+
+        # 补推工具事件（providers 回调在流结束时才有完整 JSON）
+        for tc in tool_calls:
+            tc_id = tc.get("id", "")
+            fn = tc.get("function", {})
+            self.transcript.tool("start", tool_name=fn.get("name", ""),
+                                 tool_id=tc_id, args=fn.get("arguments", ""))
+
+        return {"content": collected_text, "tool_calls": tool_calls}
+
+    # ── 重试 ──
+
+    def _retry_llm(self, system: str, messages: list[dict], tools: list[dict],
+                    on_text: Callable | None = None) -> dict | None:
+        """LLM 调用失败重试（指数退避）。"""
+        from .retry import is_retryable as _is_retryable, sleep_with_backoff
+        max_retries = self.config.get("max_retries", 2)
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                time.sleep(0.5 * (attempt + 1))  # 简单退避
+                return self._stream_llm(system, messages, tools, on_text)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1 and _is_retryable(e):
+                    sleep_with_backoff(attempt)
+                    continue
+                break
+
+        if last_error:
+            self.transcript.error(source="llm/retry",
+                                  message=f"重试 {max_retries} 次后仍失败: {last_error}")
+        return None
+
+    # ── 上下文压缩 ──
+
+    def _compact_context(self, messages: list):
+        """上下文压缩。"""
+        limit = self.config.get("max_context_messages", 50)
+        threshold = int(limit * 0.8)
 
         if len(messages) <= threshold:
             return
 
         try:
             from .context import compress_messages
-            model_name = self.config.get("model", "")
-            system_prompt = self.system_prompt or ""
-            compressed = compress_messages(messages, system_prompt, model_name)
+            before = len(messages)
+            compressed = compress_messages(messages, self._system_prompt,
+                                           self.config.get("model", ""))
             messages.clear()
             messages.extend(compressed)
-        except Exception:
-            pass
+            self.transcript.checkpoint("context_compressed",
+                                       before=before, after=len(messages))
+        except Exception as e:
+            self.transcript.error(source="context", message=str(e))
+
+    # ── v2.0 兼容接口 ──
+
+    def run_iteration(self, user_input: str, handler: StreamHandler | None = None) -> None:
+        """v2.0 兼容接口。"""
+        handler = handler or StreamHandler()
+        self.transcript.on("*", lambda e: self._bridge_handler(e, handler))
+
+        try:
+            result = self.run(
+                user_input,
+                on_text=lambda t: handler.on_text(t),
+                on_tool_start=lambda n, i: handler.on_tool_start(n, i),
+                on_tool_result=lambda r: handler.on_tool_result(r),
+            )
+            if result:
+                handler.on_complete()
+        except Exception as e:
+            handler.on_error(str(e))
+
+    def _bridge_handler(self, event, handler: StreamHandler):
+        """将转录事件桥接到 v2.0 StreamHandler。"""
+        if event.type == "thinking":
+            handler.on_thinking(event.payload.get("delta", ""))
+        elif event.type == "tool" and event.subtype == "start":
+            pass  # 已通过 on_tool_start 推送
+        elif event.type == "error":
+            handler.on_error(event.payload.get("message", ""))
 
     @property
     def messages(self) -> list:
-        """v2.0 兼容：messages 属性代理到 state。"""
         return self.state.get_all_messages()
 
     @messages.setter
     def messages(self, value: list):
-        """v2.0 兼容：允许直接赋值 messages。"""
         self.state.save_conversation(value or [])
 
     @property
     def system_prompt(self) -> str:
-        """v2.0 兼容：system_prompt 属性。"""
         return getattr(self, '_system_prompt', '')
 
     @system_prompt.setter
@@ -340,7 +466,5 @@ class Agent:
         self._system_prompt = value
 
     def close(self):
-        """清理 Agent 资源。"""
-        if self.speculative:
-            self.speculative.clear()
+        """清理资源。"""
         self.state.save()

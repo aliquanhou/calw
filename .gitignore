@@ -35,3 +35,10 @@ Thumbs.db
 # 构建输出
 *.exe
 *.spec
+
+# 临时/调试文件
+fix_*.py
+_temp_*.txt
+_temp_*.json
+page.html
+agent/sdk_messages.py

@@ -236,6 +236,13 @@ def _handle_bash(command: str = "", timeout: int = 120, output_callback=None) ->
     if not command:
         return "[错误] bash 需要 command 参数"
 
+    # 强制 timeout 为 int（LLM 有时传字符串）
+    if not isinstance(timeout, int):
+        try:
+            timeout = int(timeout)
+        except (ValueError, TypeError):
+            timeout = 120
+
     # 超时调整 — 长时间构建命令自动延长
     _build_keywords = ["pip install", "npm install", "build", "apk", "gradle",
                         "mvn ", "make ", "cmake", "python setup", "bundle",
